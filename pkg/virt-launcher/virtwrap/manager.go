@@ -851,7 +851,7 @@ func (l *LibvirtDomainManager) PrepareMigrationTarget(vmi *v1.VirtualMachineInst
 	diskInfo := make(map[string]*containerdisk.DiskInfo)
 	for i, volume := range vmi.Spec.Volumes {
 		if volume.VolumeSource.PersistentVolumeClaim != nil {
-			isBlockPVC, err := isBlockDeviceVolume(volume.Name)
+			isBlockPVC, err := isBlockDeviceVolume(volume.Name, vmi.Status.HotpluggedVolumes)
 			if err != nil {
 				logger.Reason(err).Errorf("failed to detect volume mode for Volume %v and PVC %v.",
 					volume.Name, volume.VolumeSource.PersistentVolumeClaim.ClaimName)
@@ -869,7 +869,7 @@ func (l *LibvirtDomainManager) PrepareMigrationTarget(vmi *v1.VirtualMachineInst
 			}
 			diskInfo[volume.Name] = info
 		} else if volume.VolumeSource.DataVolume != nil {
-			isBlockDV, err := isBlockDeviceVolume(volume.Name)
+			isBlockDV, err := isBlockDeviceVolume(volume.Name, vmi.Status.HotpluggedVolumes)
 			if err != nil {
 				logger.Reason(err).Errorf("failed to detect volume mode for Volume %v and DataVolume %v.",
 					volume.Name, volume.VolumeSource.DataVolume.Name)
@@ -1189,7 +1189,7 @@ func (l *LibvirtDomainManager) SyncVMI(vmi *v1.VirtualMachineInstance, useEmulat
 	diskInfo := make(map[string]*containerdisk.DiskInfo)
 	for i, volume := range vmi.Spec.Volumes {
 		if volume.VolumeSource.PersistentVolumeClaim != nil {
-			isBlockPVC, err := isBlockDeviceVolume(volume.Name)
+			isBlockPVC, err := isBlockDeviceVolume(volume.Name, vmi.Status.HotpluggedVolumes)
 			if err != nil {
 				logger.Reason(err).Errorf("failed to detect volume mode for Volume %v and PVC %v.",
 					volume.Name, volume.VolumeSource.PersistentVolumeClaim.ClaimName)
@@ -1207,7 +1207,7 @@ func (l *LibvirtDomainManager) SyncVMI(vmi *v1.VirtualMachineInstance, useEmulat
 			}
 			diskInfo[volume.Name] = info
 		} else if volume.VolumeSource.DataVolume != nil {
-			isBlockDV, err := isBlockDeviceVolume(volume.Name)
+			isBlockDV, err := isBlockDeviceVolume(volume.Name, vmi.Status.HotpluggedVolumes)
 			if err != nil {
 				logger.Reason(err).Errorf("failed to detect volume mode for Volume %v and DV %v.",
 					volume.Name, volume.VolumeSource.DataVolume.Name)
@@ -1278,6 +1278,7 @@ func (l *LibvirtDomainManager) SyncVMI(vmi *v1.VirtualMachineInstance, useEmulat
 	// To make sure, that we set the right qemu wrapper arguments,
 	// we update the domain XML whenever a VirtualMachineInstance was already defined but not running
 	if !newDomain && cli.IsDown(domState) {
+		logger.Infof("Setting domain spec %v", domain.Spec)
 		dom, err = l.setDomainSpecWithHooks(vmi, &domain.Spec)
 		if err != nil {
 			return nil, err
@@ -1315,20 +1316,101 @@ func (l *LibvirtDomainManager) SyncVMI(vmi *v1.VirtualMachineInstance, useEmulat
 		return nil, err
 	}
 
-	var newSpec api.DomainSpec
-	err = xml.Unmarshal([]byte(xmlstr), &newSpec)
+	var oldSpec api.DomainSpec
+	err = xml.Unmarshal([]byte(xmlstr), &oldSpec)
+	if err != nil {
+		logger.Reason(err).Error("Parsing domain XML failed.")
+		return nil, err
+	}
+
+	//Look up all the disks to detach
+	for _, detachDisk := range getDetachedDisks(oldSpec.Devices.Disks, domain.Spec.Devices.Disks) {
+		detachBytes, err := xml.Marshal(detachDisk)
+		logger.Infof("detach xml [%s]", strings.ToLower(string(detachBytes)))
+		if err != nil {
+			logger.Reason(err).Error("marshalling detached disk failed")
+			return nil, err
+		}
+		err = dom.DetachDevice(strings.ToLower(string(detachBytes)))
+		if err != nil {
+			logger.Reason(err).Error("detaching device")
+			return nil, err
+		}
+	}
+	//Look up all the disks to attach
+	for _, attachDisk := range getAttachedDisks(oldSpec.Devices.Disks, domain.Spec.Devices.Disks) {
+		attachBytes, err := xml.Marshal(attachDisk)
+		logger.Infof("attach xml [%s]", strings.ToLower(string(attachBytes)))
+		if err != nil {
+			logger.Reason(err).Error("marshalling attached disk failed")
+			return nil, err
+		}
+		err = dom.AttachDevice(strings.ToLower(string(attachBytes)))
+		if err != nil {
+			logger.Reason(err).Error("attaching device")
+			return nil, err
+		}
+	}
+
+	// Resync after attaching and detaching
+	xmlstr, err = dom.GetXMLDesc(0)
+	if err != nil {
+		return nil, err
+	}
+
+	err = xml.Unmarshal([]byte(xmlstr), &oldSpec)
 	if err != nil {
 		logger.Reason(err).Error("Parsing domain XML failed.")
 		return nil, err
 	}
 
 	// TODO: check if VirtualMachineInstance Spec and Domain Spec are equal or if we have to sync
-	return &newSpec, nil
+	return &oldSpec, nil
 }
 
-func isBlockDeviceVolume(volumeName string) (bool, error) {
+func getDetachedDisks(oldDisks, newDisks []api.Disk) []api.Disk {
+	res := make([]api.Disk, 0)
+	for _, oldDisk := range oldDisks {
+		found := false
+		for _, newDisk := range newDisks {
+			if oldDisk.Source.File == newDisk.Source.File {
+				found = true
+			}
+		}
+		if !found {
+			// This disk got detached, add it to the list
+			res = append(res, oldDisk)
+		}
+	}
+	return res
+}
+
+func getAttachedDisks(oldDisks, newDisks []api.Disk) []api.Disk {
+	res := make([]api.Disk, 0)
+	for _, newDisk := range newDisks {
+		found := false
+		for _, oldDisk := range oldDisks {
+			if oldDisk.Source.File == newDisk.Source.File {
+				found = true
+			}
+		}
+		if !found {
+			// This disk got detached, add it to the list
+			res = append(res, newDisk)
+		}
+	}
+	return res
+}
+
+func isBlockDeviceVolume(volumeName string, hotplugVolumes map[string]types.UID) (bool, error) {
 	// check for block device
 	path := api.GetBlockDeviceVolumePath(volumeName)
+	for hpVolumeName := range hotplugVolumes {
+		if volumeName == hpVolumeName {
+			path = api.GetHotplugBlockDeviceVolumePath(volumeName)
+			break
+		}
+	}
 	fileInfo, err := os.Stat(path)
 	if err == nil {
 		if (fileInfo.Mode() & os.ModeDevice) != 0 {
@@ -1339,6 +1421,12 @@ func isBlockDeviceVolume(volumeName string) (bool, error) {
 	if os.IsNotExist(err) {
 		// cross check: is it a filesystem volume
 		path = api.GetFilesystemVolumePath(volumeName)
+		for hpVolumeName := range hotplugVolumes {
+			if volumeName == hpVolumeName {
+				path = api.GetHotplugFilesystemVolumePath(volumeName)
+				break
+			}
+		}
 		fileInfo, err := os.Stat(path)
 		if err == nil {
 			if fileInfo.Mode().IsRegular() {

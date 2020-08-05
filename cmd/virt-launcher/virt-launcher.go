@@ -147,6 +147,7 @@ func startDomainEventMonitoring(
 func initializeDirs(virtShareDir string,
 	ephemeralDiskDir string,
 	containerDiskDir string,
+	hotplugDiskDir string,
 	uid string) {
 
 	// Resolve permission mismatch when system default mask is set more restrictive than 022.
@@ -170,6 +171,12 @@ func initializeDirs(virtShareDir string,
 	}
 
 	err = containerdisk.SetLocalDirectory(containerDiskDir)
+	if err != nil {
+		panic(err)
+	}
+
+	//TODO: Have a hotplog disk version of this, for now just use the container disk one
+	err = containerdisk.SetLocalDirectory(hotplugDiskDir)
 	if err != nil {
 		panic(err)
 	}
@@ -295,6 +302,7 @@ func main() {
 	virtShareDir := pflag.String("kubevirt-share-dir", "/var/run/kubevirt", "Shared directory between virt-handler and virt-launcher")
 	ephemeralDiskDir := pflag.String("ephemeral-disk-dir", "/var/run/kubevirt-ephemeral-disks", "Base directory for ephemeral disk data")
 	containerDiskDir := pflag.String("container-disk-dir", "/var/run/kubevirt/container-disks", "Base directory for container disk data")
+	hotplugDiskDir := pflag.String("hotplug-disk-dir", "/var/run/kubevirt/hotplug-disks", "Base directory for hotplug disk data")
 	name := pflag.String("name", "", "Name of the VirtualMachineInstance")
 	uid := pflag.String("uid", "", "UID of the VirtualMachineInstance")
 	namespace := pflag.String("namespace", "", "Namespace of the VirtualMachineInstance")
@@ -335,7 +343,7 @@ func main() {
 	vm := v1.NewVMIReferenceFromNameWithNS(*namespace, *name)
 
 	// Initialize local and shared directories
-	initializeDirs(*virtShareDir, *ephemeralDiskDir, *containerDiskDir, *uid)
+	initializeDirs(*virtShareDir, *ephemeralDiskDir, *containerDiskDir, *hotplugDiskDir, *uid)
 
 	// Start libvirtd, virtlogd, and establish libvirt connection
 	stopChan := make(chan struct{})

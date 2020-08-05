@@ -32,6 +32,7 @@ import (
 
 	k8sv1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/types"
 
 	v1 "kubevirt.io/client-go/api/v1"
 	"kubevirt.io/client-go/log"
@@ -242,6 +243,18 @@ func Add_Agent_To_api_Channel() (channel Channel) {
 	return
 }
 
+func Convert_v1_Hotplug_Volume_To_api_Disk(source *v1.Volume, disk *Disk, c *ConverterContext) error {
+	if source.PersistentVolumeClaim != nil {
+		return Convert_v1_PersistentVolumeClaim_To_api_Disk(source.Name, disk, c)
+	}
+
+	if source.DataVolume != nil {
+		return Convert_v1_Hotplug_DataVolume_To_api_Disk(source.Name, disk, c)
+	}
+	return fmt.Errorf("hotplug disk %s references an unsupported source", disk.Alias.Name)
+
+}
+
 func Convert_v1_Volume_To_api_Disk(source *v1.Volume, disk *Disk, c *ConverterContext, diskIndex int) error {
 
 	if source.ContainerDisk != nil {
@@ -304,10 +317,20 @@ func Convert_v1_Config_To_api_Disk(volumeName string, disk *Disk, configType con
 }
 
 func GetFilesystemVolumePath(volumeName string) string {
+	log.Log.Infof("Looking at path: %s", filepath.Join(string(filepath.Separator), "var", "run", "kubevirt-private", "vmi-disks", volumeName, "disk.img"))
 	return filepath.Join(string(filepath.Separator), "var", "run", "kubevirt-private", "vmi-disks", volumeName, "disk.img")
 }
 
+func GetHotplugFilesystemVolumePath(volumeName string) string {
+	log.Log.Infof("Looking at path: %s", filepath.Join(string(filepath.Separator), "var", "run", "kubevirt", "hotplug-disks", fmt.Sprintf("%s/disk.img", volumeName)))
+	return filepath.Join(string(filepath.Separator), "var", "run", "kubevirt", "hotplug-disks", fmt.Sprintf("%s/disk.img", volumeName))
+}
+
 func GetBlockDeviceVolumePath(volumeName string) string {
+	return filepath.Join(string(filepath.Separator), "dev", volumeName)
+}
+
+func GetHotplugBlockDeviceVolumePath(volumeName string) string {
 	return filepath.Join(string(filepath.Separator), "dev", volumeName)
 }
 
@@ -325,6 +348,13 @@ func Convert_v1_DataVolume_To_api_Disk(name string, disk *Disk, c *ConverterCont
 	return Convert_v1_FilesystemVolumeSource_To_api_Disk(name, disk, c)
 }
 
+func Convert_v1_Hotplug_DataVolume_To_api_Disk(name string, disk *Disk, c *ConverterContext) error {
+	if c.IsBlockDV[name] {
+		return Convert_v1_Hotplug_BlockVolumeSource_To_api_Disk(name, disk, c)
+	}
+	return Convert_v1_Hotplug_FilesystemVolumeSource_To_api_Disk(name, disk, c)
+}
+
 // Convert_v1_FilesystemVolumeSource_To_api_Disk takes a FS source and builds the KVM Disk representation
 func Convert_v1_FilesystemVolumeSource_To_api_Disk(volumeName string, disk *Disk, c *ConverterContext) error {
 	disk.Type = "file"
@@ -333,10 +363,25 @@ func Convert_v1_FilesystemVolumeSource_To_api_Disk(volumeName string, disk *Disk
 	return nil
 }
 
+// Convert_v1_Hotplug_FilesystemVolumeSource_To_api_Disk takes a FS source and builds the KVM Disk representation
+func Convert_v1_Hotplug_FilesystemVolumeSource_To_api_Disk(volumeName string, disk *Disk, c *ConverterContext) error {
+	disk.Type = "file"
+	disk.Driver.Type = "raw"
+	disk.Source.File = GetHotplugFilesystemVolumePath(volumeName)
+	return nil
+}
+
 func Convert_v1_BlockVolumeSource_To_api_Disk(volumeName string, disk *Disk, c *ConverterContext) error {
 	disk.Type = "block"
 	disk.Driver.Type = "raw"
 	disk.Source.Dev = GetBlockDeviceVolumePath(volumeName)
+	return nil
+}
+
+func Convert_v1_Hotplug_BlockVolumeSource_To_api_Disk(volumeName string, disk *Disk, c *ConverterContext) error {
+	disk.Type = "block"
+	disk.Driver.Type = "raw"
+	disk.Source.Dev = GetHotplugBlockDeviceVolumePath(volumeName)
 	return nil
 }
 
@@ -951,7 +996,7 @@ func Convert_v1_VirtualMachine_To_api_Domain(vmi *v1.VirtualMachineInstance, dom
 	devicePerBus := make(map[string]int)
 	for _, disk := range vmi.Spec.Domain.Devices.Disks {
 		newDisk := Disk{}
-
+		log.Log.Infof("Checking disk %s", disk.Name)
 		err := Convert_v1_Disk_To_api_Disk(&disk, &newDisk, devicePerBus, numBlkQueues)
 		if err != nil {
 			return err
@@ -960,11 +1005,25 @@ func Convert_v1_VirtualMachine_To_api_Domain(vmi *v1.VirtualMachineInstance, dom
 		if volume == nil {
 			return fmt.Errorf("No matching volume with name %s found", disk.Name)
 		}
-		err = Convert_v1_Volume_To_api_Disk(volume, &newDisk, c, volumeIndices[disk.Name])
-		if err != nil {
-			return err
+		hotplugDisk := false
+		for volumeName := range vmi.Status.HotpluggedVolumes {
+			if volumeName == disk.Name {
+				hotplugDisk = true
+			}
 		}
-
+		if hotplugDisk {
+			log.Log.Infof("Convert_v1_Hotplug_Volume_To_api_Disk %s", disk.Name)
+			err = Convert_v1_Hotplug_Volume_To_api_Disk(volume, &newDisk, c)
+			if err != nil {
+				return err
+			}
+		} else {
+			log.Log.Infof("Convert_v1_Volume_To_api_Disk %s", disk.Name)
+			err = Convert_v1_Volume_To_api_Disk(volume, &newDisk, c, volumeIndices[disk.Name])
+			if err != nil {
+				return err
+			}
+		}
 		if useIOThreads {
 			ioThreadId := defaultIOThread
 			dedicatedThread := false
@@ -984,7 +1043,10 @@ func Convert_v1_VirtualMachine_To_api_Domain(vmi *v1.VirtualMachineInstance, dom
 			newDisk.Driver.IOThread = &ioThreadId
 		}
 
-		domain.Spec.Devices.Disks = append(domain.Spec.Devices.Disks, newDisk)
+		if !hotplugDisk || vmi.Status.HotpluggedVolumes[disk.Name] != types.UID("") {
+			log.Log.Infof("Adding disk %v", disk)
+			domain.Spec.Devices.Disks = append(domain.Spec.Devices.Disks, newDisk)
+		}
 	}
 	// Handle virtioFS
 	for _, fs := range vmi.Spec.Domain.Devices.Filesystems {
@@ -1080,6 +1142,13 @@ func Convert_v1_VirtualMachine_To_api_Domain(vmi *v1.VirtualMachineInstance, dom
 			Model: "qemu-xhci",
 		})
 	}
+
+	// TODO: Put this in API, so the user can enable/disable the pcie-scsi controller
+	domain.Spec.Devices.Controllers = append(domain.Spec.Devices.Controllers, Controller{
+		Type:  "scsi",
+		Index: "0",
+		Model: "virtio-scsi",
+	})
 
 	if vmi.Spec.Domain.Clock != nil {
 		clock := vmi.Spec.Domain.Clock

@@ -376,6 +376,12 @@ func SetupLibvirt() error {
 	}
 	defer qemuConf.Close()
 	// We are in a container, don't try to stuff qemu inside special cgroups
+	_, err = qemuConf.WriteString("stdio_handler = \"logd\"\n")
+	_, err = qemuConf.WriteString("user = \"qemu\"\n")
+	_, err = qemuConf.WriteString("group = \"qemu\"\n")
+	_, err = qemuConf.WriteString("dynamic_ownership = 1\n")
+	_, err = qemuConf.WriteString("remember_owner = 0\n")
+	_, err = qemuConf.WriteString("namespaces = [ ]\n")
 	_, err = qemuConf.WriteString("cgroup_controllers = [ ]\n")
 	if err != nil {
 		return err

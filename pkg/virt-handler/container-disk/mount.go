@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -36,7 +37,9 @@ type mounter struct {
 type Mounter interface {
 	ContainerDisksReady(vmi *v1.VirtualMachineInstance, notInitializedSince time.Time) (bool, error)
 	Mount(vmi *v1.VirtualMachineInstance, verify bool) error
+	MountHotplugVolumes(vmi *v1.VirtualMachineInstance) error
 	Unmount(vmi *v1.VirtualMachineInstance) error
+	UnmountHotplugVolumes(vmi *v1.VirtualMachineInstance) error
 }
 
 type vmiMountTargetEntry struct {
@@ -172,6 +175,169 @@ func (m *mounter) setMountTargetRecord(vmi *v1.VirtualMachineInstance, record *v
 
 	m.mountRecords[vmi.UID] = record
 
+	return nil
+}
+
+// TODO: Put this somewhere saner than here.
+func (m *mounter) MountHotplugVolumes(vmi *v1.VirtualMachineInstance) error {
+	record := vmiMountTargetRecord{}
+	for volume, sourceUID := range vmi.Status.HotpluggedVolumes {
+		log.DefaultLogger().Infof("Hotplug check volume name: %s", volume)
+		// TODO: Get disk ordering sorted, we can use that to determine which source pod to use.
+		targetPath, targetUID, err := m.getTargetPath(vmi, volume)
+		if err != nil {
+			return err
+		}
+
+		record.MountTargetEntries = append(record.MountTargetEntries, vmiMountTargetEntry{
+			TargetFile: targetPath,
+		})
+
+		sourceFiles, err := m.getSourcePodFiles(vmi, sourceUID, targetUID)
+
+		log.DefaultLogger().Infof("Targetpath: %s", targetPath)
+
+		nodeRes := isolation.NodeIsolationResult()
+
+		if isMounted, err := nodeRes.IsMounted(targetPath); err != nil {
+			return fmt.Errorf("failed to determine if %s is already mounted: %v", targetPath, err)
+		} else if !isMounted {
+			// f, err := os.Create(targetPath)
+			// if err != nil {
+			// 	return fmt.Errorf("failed to create mount point target %v: %v", targetPath, err)
+			// }
+			// f.Close()
+			log.DefaultLogger().Info("Not mounted")
+			log.DefaultLogger().Infof("Sources: %v", sourceFiles)
+			if len(sourceFiles) == 1 {
+				for _, sourceFile := range sourceFiles {
+					log.DefaultLogger().Infof("/usr/bin/virt-chroot --mount /proc/1/ns/mnt mount -o bind %s %s", strings.TrimPrefix(sourceFile, nodeRes.MountRoot()), targetPath)
+					out, err := exec.Command("/usr/bin/virt-chroot", "--mount", "/proc/1/ns/mnt", "mount", "-o", "bind", strings.TrimPrefix(sourceFile, nodeRes.MountRoot()), targetPath).CombinedOutput()
+					if err != nil {
+						return fmt.Errorf("failed to bindmount hotplug-disk %v: %v : %v", volume, string(out), err)
+					}
+				}
+			}
+		} else {
+			log.DefaultLogger().Info("Skipping already mounted")
+		}
+	}
+
+	if len(record.MountTargetEntries) > 0 {
+		err := m.setMountTargetRecord(vmi, &record)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (m *mounter) getTargetPath(vmi *v1.VirtualMachineInstance, volumeName string) (string, types.UID, error) {
+	targetPath, podUID, err := m.getTargetPodPath(vmi)
+	if err != nil {
+		return targetPath, podUID, err
+	}
+	diskPath := fmt.Sprintf("%s/%s", targetPath, volumeName)
+	exists, _ := diskutils.FileExists(diskPath)
+	if !exists {
+		err = os.Mkdir(diskPath, 0755)
+		if err != nil {
+			return diskPath, podUID, err
+		}
+	}
+	diskFile := fmt.Sprintf("%s/%s", targetPath, volumeName)
+	return diskFile, podUID, err
+}
+
+func (m *mounter) getTargetPodPath(vmi *v1.VirtualMachineInstance) (string, types.UID, error) {
+	var basepath string
+	for podUID := range vmi.Status.ActivePods {
+		basepath = fmt.Sprintf("/pods/%s/volumes/kubernetes.io~empty-dir/hotplug-disks", string(podUID))
+		log.DefaultLogger().Infof("Checking path: %s", basepath)
+		exists, _ := diskutils.FileExists(basepath)
+		if exists {
+			log.DefaultLogger().Infof("Found path: %s", basepath)
+			return fmt.Sprintf("/var/lib/kubelet%s", basepath), podUID, nil
+		}
+	}
+	return "", "", fmt.Errorf("Unable to locate target path")
+}
+
+func (m *mounter) getSourcePodFiles(vmi *v1.VirtualMachineInstance, sourceUID, targetUID types.UID) ([]string, error) {
+	// TODO: this doesn't work for multiple source pods, need to use some kind of disk identifier to make sure we find only one.
+	paths := make([]string, 0)
+	if sourceUID != types.UID("") {
+		basepath := fmt.Sprintf("/proc/1/root/var/lib/kubelet/pods/%s/volumes", string(sourceUID))
+		log.DefaultLogger().Infof("Source checking path: %s", basepath)
+		//TODO: skip rest of walk once found.
+		err := filepath.Walk(basepath, func(filePath string, info os.FileInfo, err error) error {
+			if path.Base(filePath) == "disk.img" {
+				// Found disk image
+				log.DefaultLogger().Infof("found source path: %s", filePath)
+				paths = append(paths, path.Dir(filePath))
+			}
+			return nil
+		})
+		if err != nil {
+			return paths, err
+		}
+	}
+	return paths, nil
+}
+
+// UnmountHotplugDisks unmounts all hotplug disks of a given VMI.
+func (m *mounter) UnmountHotplugVolumes(vmi *v1.VirtualMachineInstance) error {
+	log.DefaultLogger().Info("Unmounting start")
+	if vmi.UID != "" {
+		record, err := m.getMountTargetRecord(vmi)
+		if err != nil {
+			return err
+		} else if record == nil {
+			log.DefaultLogger().Info("No record found")
+			// no entries to unmount
+			return nil
+		}
+
+		log.DefaultLogger().Infof("Record found: %v", *record)
+
+		currentHotplugPaths := make(map[string]types.UID, 0)
+
+		for volume := range vmi.Status.HotpluggedVolumes {
+			path, uid, err := m.getTargetPath(vmi, volume)
+			if err != nil {
+				return err
+			}
+			log.DefaultLogger().Infof("Volume path found: %s", path)
+			currentHotplugPaths[path] = uid
+		}
+		for _, entry := range record.MountTargetEntries {
+			diskPath := entry.TargetFile
+			log.DefaultLogger().Infof("Checking if path mounted: %s", diskPath)
+			if _, ok := currentHotplugPaths[diskPath]; !ok {
+				log.DefaultLogger().Infof("Unmounting path: %s", diskPath)
+				if mounted, err := isolation.NodeIsolationResult().IsMounted(diskPath); err != nil {
+					return fmt.Errorf("failed to check mount point for hotplug disk %v: %v", diskPath, err)
+				} else if mounted {
+					out, err := exec.Command("/usr/bin/virt-chroot", "--mount", "/proc/1/ns/mnt", "umount", diskPath).CombinedOutput()
+					if err != nil {
+						return fmt.Errorf("failed to unmount hotplug disk %v: %v : %v", diskPath, string(out), err)
+					}
+					err = os.Remove(diskPath)
+					if err != nil {
+						return fmt.Errorf("failed to remove hotplug disk directory %v: %v : %v", diskPath, string(out), err)
+					}
+
+				} else {
+					log.DefaultLogger().Info("Not mounted skipping")
+				}
+			}
+		}
+		err = m.deleteMountTargetRecord(vmi)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

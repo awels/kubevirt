@@ -51,7 +51,7 @@ var _ = Describe("ContainerDisk", func() {
 		expectedVolumeMountDir := fmt.Sprintf("%s/%s", tmpDir, string(vmi.UID))
 
 		// create a fake disk file
-		volumeMountDir := GetVolumeMountDirOnGuest(vmi)
+		volumeMountDir := GetVolumeMountDirOnGuest(vmi, "container-disks")
 		err = os.MkdirAll(volumeMountDir, 0750)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(expectedVolumeMountDir).To(Equal(volumeMountDir))
@@ -97,14 +97,14 @@ var _ = Describe("ContainerDisk", func() {
 				}
 
 				// should not be found if dir doesn't exist
-				path, found, err := GetVolumeMountDirOnHost(vmi)
+				path, found, err := GetVolumeMountDirOnHost(vmi, "container-disks")
 				Expect(err).ToNot(HaveOccurred())
 				Expect(found).To(BeFalse())
 
 				// should be found if dir does exist
 				expectedPath := fmt.Sprintf("%s/1234/volumes/kubernetes.io~empty-dir/container-disks", tmpDir)
 				os.MkdirAll(expectedPath, 0755)
-				path, found, err = GetVolumeMountDirOnHost(vmi)
+				path, found, err = GetVolumeMountDirOnHost(vmi, "container-disks")
 				Expect(err).ToNot(HaveOccurred())
 				Expect(found).To(BeTrue())
 				Expect(path).To(Equal(expectedPath))

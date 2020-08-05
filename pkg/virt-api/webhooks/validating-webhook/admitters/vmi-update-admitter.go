@@ -45,8 +45,28 @@ func (admitter *VMIUpdateAdmitter) Admit(ar *v1beta1.AdmissionReview) *v1beta1.A
 		return webhookutils.ToAdmissionResponseError(err)
 	}
 
+	allDisksFound := true
+	for _, disk := range newVMI.Spec.Domain.Devices.Disks {
+		currentDiskFound := false
+		for _, volume := range newVMI.Spec.Volumes {
+			if volume.Name == disk.Name {
+				currentDiskFound = true
+				continue
+			}
+		}
+		if !currentDiskFound {
+			allDisksFound = false
+			break
+		}
+	}
+
+	// Check for modifications outside of volumes
+	newVMI.Spec.Volumes = []v1.Volume{}
+	oldVMI.Spec.Volumes = []v1.Volume{}
+	newVMI.Spec.Domain.Devices.Disks = []v1.Disk{}
+	oldVMI.Spec.Domain.Devices.Disks = []v1.Disk{}
 	// Reject VMI update if VMI spec changed
-	if !reflect.DeepEqual(newVMI.Spec, oldVMI.Spec) {
+	if !allDisksFound || !reflect.DeepEqual(newVMI.Spec, oldVMI.Spec) {
 		return webhookutils.ToAdmissionResponse([]metav1.StatusCause{
 			{
 				Type:    metav1.CauseTypeFieldValueNotSupported,

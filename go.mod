@@ -1,5 +1,7 @@
 module kubevirt.io/kubevirt
 
+go 1.14
+
 require (
 	github.com/Azure/go-autorest/autorest v0.9.1 // indirect
 	github.com/Azure/go-autorest/autorest/adal v0.6.0 // indirect
@@ -116,5 +118,3 @@ replace (
 
 	kubevirt.io/containerized-data-importer => kubevirt.io/containerized-data-importer v1.23.5
 )
-
-go 1.13

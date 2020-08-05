@@ -10532,6 +10532,13 @@
       "description": "Guest OS Information",
       "$ref": "#/definitions/v1.VirtualMachineInstanceGuestOSInfo"
      },
+     "hotpluggedVolumes": {
+      "description": "List of volumes that are hot plugged.",
+      "type": "object",
+      "additionalProperties": {
+       "type": "string"
+      }
+     },
      "interfaces": {
       "description": "Interfaces represent the details of available network interfaces.",
       "type": "array",

@@ -30,7 +30,7 @@ func PlacePCIDevicesOnRootComplex(spec *DomainSpec) (err error) {
 		}
 	}
 	for i, disk := range spec.Devices.Disks {
-		if disk.Target.Bus != "virtio" {
+		if disk.Target.Bus != "virtio" && disk.Target.Bus != "scsi" {
 			continue
 		}
 		spec.Devices.Disks[i].Address, err = assigner.PlacePCIDeviceAtNextSlot(disk.Address)

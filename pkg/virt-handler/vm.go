@@ -1463,6 +1463,9 @@ func (d *VirtualMachineController) processVmCleanup(vmi *v1.VirtualMachineInstan
 		return err
 	}
 
+	if err := d.containerDiskMounter.UnmountHotplugVolumes(vmi); err != nil {
+		return err
+	}
 	d.clearPodNetworkPhase1(vmi.UID)
 
 	// Watch dog file and command client must be the last things removed here
@@ -2046,6 +2049,15 @@ func (d *VirtualMachineController) processVmUpdate(origVMI *v1.VirtualMachineIns
 			err = d.podIsolationDetector.AdjustResources(vmi)
 			if err != nil {
 				return fmt.Errorf("failed to adjust resources: %v", err)
+			}
+		} else if vmi.IsRunning() && !vmi.IsFinal() {
+			log.DefaultLogger().Infof("Checking hotplug volumes! %v", vmi.Status.HotpluggedVolumes)
+			// Umount any disks no longer mounted
+			if err := d.containerDiskMounter.UnmountHotplugVolumes(vmi); err != nil {
+				return err
+			}
+			if err := d.containerDiskMounter.MountHotplugVolumes(vmi); err != nil {
+				return err
 			}
 		}
 
