@@ -331,7 +331,8 @@ func GetBlockDeviceVolumePath(volumeName string) string {
 }
 
 func GetHotplugBlockDeviceVolumePath(volumeName string) string {
-	return filepath.Join(string(filepath.Separator), "dev", volumeName)
+	log.Log.Infof("Looking at path: %s", filepath.Join(string(filepath.Separator), "var", "run", "kubevirt", "hotplug-disks", volumeName))
+	return filepath.Join(string(filepath.Separator), "var", "run", "kubevirt", "hotplug-disks", volumeName)
 }
 
 func Convert_v1_PersistentVolumeClaim_To_api_Disk(name string, disk *Disk, c *ConverterContext) error {
@@ -1044,8 +1045,16 @@ func Convert_v1_VirtualMachine_To_api_Domain(vmi *v1.VirtualMachineInstance, dom
 		}
 
 		if !hotplugDisk || vmi.Status.HotpluggedVolumes[disk.Name] != types.UID("") {
-			log.Log.Infof("Adding disk %v", disk)
-			domain.Spec.Devices.Disks = append(domain.Spec.Devices.Disks, newDisk)
+			inSpec := false
+			for _, specVolume := range vmi.Spec.Volumes {
+				if specVolume.Name == disk.Name {
+					inSpec = true
+				}
+			}
+			if inSpec {
+				log.Log.Infof("Adding disk %v", disk)
+				domain.Spec.Devices.Disks = append(domain.Spec.Devices.Disks, newDisk)
+			}
 		}
 	}
 	// Handle virtioFS

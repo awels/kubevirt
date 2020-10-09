@@ -1324,8 +1324,10 @@ func (l *LibvirtDomainManager) SyncVMI(vmi *v1.VirtualMachineInstance, useEmulat
 	}
 
 	//Look up all the disks to detach
+	detachedDisks := make([]api.Disk, 0)
 	for _, detachDisk := range getDetachedDisks(oldSpec.Devices.Disks, domain.Spec.Devices.Disks) {
 		detachBytes, err := xml.Marshal(detachDisk)
+		detachedDisks = append(detachedDisks, detachDisk)
 		logger.Infof("detach xml [%s]", strings.ToLower(string(detachBytes)))
 		if err != nil {
 			logger.Reason(err).Error("marshalling detached disk failed")
@@ -1339,6 +1341,10 @@ func (l *LibvirtDomainManager) SyncVMI(vmi *v1.VirtualMachineInstance, useEmulat
 	}
 	//Look up all the disks to attach
 	for _, attachDisk := range getAttachedDisks(oldSpec.Devices.Disks, domain.Spec.Devices.Disks) {
+		if isDetached(detachedDisks, attachDisk) {
+			// Don't attach disks we just detached
+			continue
+		}
 		attachBytes, err := xml.Marshal(attachDisk)
 		logger.Infof("attach xml [%s]", strings.ToLower(string(attachBytes)))
 		if err != nil {
@@ -1366,6 +1372,15 @@ func (l *LibvirtDomainManager) SyncVMI(vmi *v1.VirtualMachineInstance, useEmulat
 
 	// TODO: check if VirtualMachineInstance Spec and Domain Spec are equal or if we have to sync
 	return &oldSpec, nil
+}
+
+func isDetached(detachedDisks []api.Disk, checkDisk api.Disk) bool {
+	for _, detachedDisk := range detachedDisks {
+		if detachedDisk.Source.File == checkDisk.Source.File {
+			return true
+		}
+	}
+	return false
 }
 
 func getDetachedDisks(oldDisks, newDisks []api.Disk) []api.Disk {
