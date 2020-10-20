@@ -184,6 +184,17 @@ func newApiServerClusterRole() *rbacv1.ClusterRole {
 					"get", "list", "watch",
 				},
 			},
+			{
+				APIGroups: []string{
+					"cdi.kubevirt.io",
+				},
+				Resources: []string{
+					"datavolumes",
+				},
+				Verbs: []string{
+					"get",
+				},
+			},
 		},
 	}
 }

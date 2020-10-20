@@ -6576,6 +6576,47 @@
      }
     ]
    },
+   "/apis/subresources.kubevirt.io/v1alpha3/namespaces/{namespace:[a-z0-9][a-z0-9\\-]*}/virtualmachines/{name:[a-z0-9][a-z0-9\\-]*}/addvolume": {
+    "put": {
+     "description": "Add a volume and disk to a running Virtual Machine.",
+     "operationId": "addvolume",
+     "responses": {
+      "200": {
+       "description": "OK",
+       "schema": {
+        "type": "string"
+       }
+      },
+      "400": {
+       "description": "Bad Request",
+       "schema": {
+        "type": "string"
+       }
+      },
+      "401": {
+       "description": "Unauthorized"
+      }
+     }
+    },
+    "parameters": [
+     {
+      "uniqueItems": true,
+      "type": "string",
+      "description": "Name of the resource",
+      "name": "name",
+      "in": "path",
+      "required": true
+     },
+     {
+      "uniqueItems": true,
+      "type": "string",
+      "description": "Object name and auth scope, such as for teams and projects",
+      "name": "namespace",
+      "in": "path",
+      "required": true
+     }
+    ]
+   },
    "/apis/subresources.kubevirt.io/v1alpha3/namespaces/{namespace:[a-z0-9][a-z0-9\\-]*}/virtualmachines/{name:[a-z0-9][a-z0-9\\-]*}/migrate": {
     "put": {
      "description": "Migrate a running VirtualMachine to another node.",
@@ -6601,6 +6642,47 @@
        "schema": {
         "type": "string"
        }
+      }
+     }
+    },
+    "parameters": [
+     {
+      "uniqueItems": true,
+      "type": "string",
+      "description": "Name of the resource",
+      "name": "name",
+      "in": "path",
+      "required": true
+     },
+     {
+      "uniqueItems": true,
+      "type": "string",
+      "description": "Object name and auth scope, such as for teams and projects",
+      "name": "namespace",
+      "in": "path",
+      "required": true
+     }
+    ]
+   },
+   "/apis/subresources.kubevirt.io/v1alpha3/namespaces/{namespace:[a-z0-9][a-z0-9\\-]*}/virtualmachines/{name:[a-z0-9][a-z0-9\\-]*}/removevolume": {
+    "put": {
+     "description": "Removes a volume and disk from a running Virtual Machine.",
+     "operationId": "removevolume",
+     "responses": {
+      "200": {
+       "description": "OK",
+       "schema": {
+        "type": "string"
+       }
+      },
+      "400": {
+       "description": "Bad Request",
+       "schema": {
+        "type": "string"
+       }
+      },
+      "401": {
+       "description": "Unauthorized"
       }
      }
     },

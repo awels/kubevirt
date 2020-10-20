@@ -421,6 +421,12 @@ func (RenameOptions) SwaggerDoc() map[string]string {
 	}
 }
 
+func (HotplugVolumeRequest) SwaggerDoc() map[string]string {
+	return map[string]string{
+		"": "HotplugVolumeRequest is provided when hot plugging a volume and disk",
+	}
+}
+
 func (KubeVirtConfiguration) SwaggerDoc() map[string]string {
 	return map[string]string{
 		"": "KubeVirtConfiguration holds all kubevirt configurations\n+k8s:openapi-gen=true",

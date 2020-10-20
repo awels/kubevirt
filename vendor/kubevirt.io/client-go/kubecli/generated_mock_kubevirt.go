@@ -1267,6 +1267,26 @@ func (_mr *_MockVirtualMachineInterfaceRecorder) Rename(arg0, arg1 interface{}) 
 	return _mr.mock.ctrl.RecordCall(_mr.mock, "Rename", arg0, arg1)
 }
 
+func (_m *MockVirtualMachineInterface) AddVolume(name string, hotplugRequest *v114.HotplugVolumeRequest) error {
+	ret := _m.ctrl.Call(_m, "AddVolume", name, hotplugRequest)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+func (_mr *_MockVirtualMachineInterfaceRecorder) AddVolume(arg0, arg1 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "AddVolume", arg0, arg1)
+}
+
+func (_m *MockVirtualMachineInterface) RemoveVolume(name string, hotplugRequest *v114.HotplugVolumeRequest) error {
+	ret := _m.ctrl.Call(_m, "RemoveVolume", name, hotplugRequest)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+func (_mr *_MockVirtualMachineInterfaceRecorder) RemoveVolume(arg0, arg1 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "RemoveVolume", arg0, arg1)
+}
+
 // Mock of VirtualMachineInstanceMigrationInterface interface
 type MockVirtualMachineInstanceMigrationInterface struct {
 	ctrl     *gomock.Controller

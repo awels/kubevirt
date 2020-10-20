@@ -34,19 +34,26 @@ import (
 )
 
 const (
-	COMMAND_START       = "start"
-	COMMAND_STOP        = "stop"
-	COMMAND_RESTART     = "restart"
-	COMMAND_MIGRATE     = "migrate"
-	COMMAND_RENAME      = "rename"
-	COMMAND_GUESTOSINFO = "guestosinfo"
-	COMMAND_USERLIST    = "userlist"
-	COMMAND_FSLIST      = "fslist"
+	COMMAND_START        = "start"
+	COMMAND_STOP         = "stop"
+	COMMAND_RESTART      = "restart"
+	COMMAND_MIGRATE      = "migrate"
+	COMMAND_RENAME       = "rename"
+	COMMAND_GUESTOSINFO  = "guestosinfo"
+	COMMAND_USERLIST     = "userlist"
+	COMMAND_FSLIST       = "fslist"
+	COMMAND_ADDVOLUME    = "addvolume"
+	COMMAND_REMOVEVOLUME = "removevolume"
 )
 
 var (
 	forceRestart bool
 	gracePeriod  int = -1
+	volumeName string
+	diskName string
+	serial string
+	ephemeral bool
+	bus string
 )
 
 func NewStartCommand(clientConfig clientcmd.ClientConfig) *cobra.Command {
@@ -171,6 +178,46 @@ func NewFSListCommand(clientConfig clientcmd.ClientConfig) *cobra.Command {
 	return cmd
 }
 
+func NewAddVolumeCommand(clientConfig clientcmd.ClientConfig) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "addvolume (VM)",
+		Short:   "add a volume and disk to a running VM",
+		Example: usage(COMMAND_ADDVOLUME),
+		Args:    templates.ExactArgs("addvolume", 1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c := Command{command: COMMAND_ADDVOLUME, clientConfig: clientConfig}
+			return c.Run(cmd, args)
+		},
+	}
+	cmd.SetUsageTemplate(templates.UsageTemplate())
+	cmd.Flags().StringVar(&volumeName, "volume-name", "", "name used in volumes section of spec")
+	cmd.MarkFlagRequired("volume-name")
+	cmd.Flags().StringVar(&diskName, "disk-name", "", "name used in disks section of domain spec")
+	cmd.MarkFlagRequired("disk-name")
+	cmd.Flags().StringVar(&serial, "serial", "", "serial number you want to assign to the disk")
+	cmd.Flags().StringVar(&bus, "bus", "scsi", "scsi or virtio, defaults to scsi")
+	cmd.Flags().BoolVar(&ephemeral, "ephemeral", false, "Make volume a permanent part of the VM, on restart it will no longer be hotplugged")
+
+	return cmd
+}
+
+func NewRemoveVolumeCommand(clientConfig clientcmd.ClientConfig) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "removevolume (VM)",
+		Short:   "remove a volume and disk from a running VM",
+		Example: usage(COMMAND_REMOVEVOLUME),
+		Args:    templates.ExactArgs("removevolume", 1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c := Command{command: COMMAND_REMOVEVOLUME, clientConfig: clientConfig}
+			return c.Run(cmd, args)
+		},
+	}
+	cmd.SetUsageTemplate(templates.UsageTemplate())
+	cmd.Flags().StringVar(&volumeName, "volume-name", "", "name used in volumes section of spec")
+	cmd.MarkFlagRequired("volume-name")
+	return cmd
+}
+
 type Command struct {
 	clientConfig clientcmd.ClientConfig
 	command      string
@@ -280,6 +327,49 @@ func (o *Command) Run(cmd *cobra.Command, args []string) error {
 		}
 
 		fmt.Printf("%s\n", string(data))
+		return nil
+	case COMMAND_ADDVOLUME:
+		if bus != "scsi" && bus != "virtio" {
+			return fmt.Errorf("Bus should be either scsi or virtio")
+		}
+		hotplugRequest := &v1.HotplugVolumeRequest{
+			Volume: &v1.Volume{
+				VolumeSource: v1.VolumeSource{
+					DataVolume: &v1.DataVolumeSource{
+						Name: volumeName,
+					},
+				},
+				Name: diskName,
+			},
+			Disk: &v1.Disk{
+				Name:   diskName,
+				Serial: serial,
+				DiskDevice: v1.DiskDevice{
+					Disk: &v1.DiskTarget{
+						Bus: bus,
+					},
+				},
+			},
+			Ephemeral: ephemeral,
+		}
+		err := virtClient.VirtualMachine(namespace).AddVolume(vmiName, hotplugRequest)
+		if err != nil {
+			return fmt.Errorf("Error adding volume, %v", err)
+		}
+		return nil
+	case COMMAND_REMOVEVOLUME:
+		hotplugRequest := &v1.HotplugVolumeRequest{}
+		hotplugRequest.Volume = &v1.Volume{
+			VolumeSource: v1.VolumeSource{
+				DataVolume: &v1.DataVolumeSource{
+					Name: volumeName,
+				},
+			},
+		}
+		err := virtClient.VirtualMachine(namespace).RemoveVolume(vmiName, hotplugRequest)
+		if err != nil {
+			return fmt.Errorf("Error removing volume, %v", err)
+		}
 		return nil
 	}
 

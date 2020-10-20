@@ -901,3 +901,246 @@ func (app *SubresourceAPIApp) FilesystemList(request *restful.Request, response 
 
 	response.WriteEntity(filesystemList)
 }
+
+// AddVolumeRequestHandler handles the subresource for hot plugging a volume and disk.
+func (app *SubresourceAPIApp) AddVolumeRequestHandler(request *restful.Request, response *restful.Response) {
+	name := request.PathParameter("name")
+	namespace := request.PathParameter("namespace")
+
+	opts := &v1.HotplugVolumeRequest{}
+	if request.Request.Body != nil {
+		defer request.Request.Body.Close()
+		err := yaml.NewYAMLOrJSONDecoder(request.Request.Body, 1024).Decode(opts)
+		switch err {
+		case io.EOF, nil:
+			break
+		default:
+			writeError(errors.NewBadRequest(fmt.Sprintf("Can not unmarshal Request body to struct, error: %s",
+				err)), response)
+			return
+		}
+	} else {
+		writeError(errors.NewBadRequest("Request with no body, a new name is expected as the request body"),
+			response)
+		return
+	}
+
+	if (opts.Disk != nil && opts.FileSystem != nil) || (opts.Disk == nil && opts.FileSystem == nil) {
+		writeError(errors.NewBadRequest("Request with invalid disk and or file system, please supply one or the other"),
+			response)
+	}
+
+	if !opts.Ephemeral {
+		// TODO: Call a mechanism to update the VM spec itself (Using VirtualMachineState)
+	}
+
+	vmi, statusErr := app.fetchVirtualMachineInstance(name, namespace)
+	if statusErr != nil {
+		writeError(statusErr, response)
+		return
+	}
+	if vmi.Status.Phase != v1.Running {
+		writeError(errors.NewForbidden(v1.Resource("virtualmachineinstance"), vmi.Name, fmt.Errorf("Virtual Machine instance not running")), response)
+	}
+
+	if !app.checkIfVolumeExist(opts, vmi) {
+		// Validate volume
+		statusErr = app.validateVolume(opts.Volume, namespace)
+		if statusErr != nil {
+			writeError(statusErr, response)
+			return
+		}
+		vmi.Spec.Volumes = append(vmi.Spec.Volumes, *opts.Volume)
+		if opts.Disk != nil {
+			// Validate disk
+			statusErr = app.validateDisk(opts.Disk, vmi)
+			if statusErr != nil {
+				writeError(statusErr, response)
+				return
+			}
+			vmi.Spec.Domain.Devices.Disks = append(vmi.Spec.Domain.Devices.Disks, *opts.Disk)
+		} else if opts.FileSystem != nil {
+			// Validate FileSystem
+			vmi.Spec.Domain.Devices.Filesystems = append(vmi.Spec.Domain.Devices.Filesystems, *opts.FileSystem)
+		}
+
+		// Really should be doing a patch here, but seems all patch functions only take subresources, and I am updating the spec.
+		_, err := app.virtCli.VirtualMachineInstance(namespace).Update(vmi)
+		if err != nil {
+			writeError(errors.NewInternalError(err), response)
+			return
+		}
+	}
+	response.WriteHeader(http.StatusAccepted)
+}
+
+func (app *SubresourceAPIApp) checkIfVolumeExist(request *v1.HotplugVolumeRequest, vmi *v1.VirtualMachineInstance) bool {
+	for _, volume := range vmi.Spec.Volumes {
+		if volume.Name == request.Volume.Name {
+			return true
+		}
+	}
+	// Volume not found, check disk and fs
+	if request.Disk != nil {
+		for _, disk := range vmi.Spec.Domain.Devices.Disks {
+			if request.Disk.Name == disk.Name {
+				return true
+			}
+		}
+	}
+	if request.FileSystem != nil {
+		for _, fs := range vmi.Spec.Domain.Devices.Filesystems {
+			if request.FileSystem.Name == fs.Name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (app *SubresourceAPIApp) validateVolume(volume *v1.Volume, namespace string) *errors.StatusError {
+	if volume.DataVolume != nil {
+		// Verify the datavolume exists.
+		_, err := app.virtCli.CdiClient().CdiV1alpha1().DataVolumes(namespace).Get(volume.DataVolume.Name, k8smetav1.GetOptions{})
+		if err != nil {
+			if errors.IsNotFound(err) {
+				return errors.NewNotFound(v1.Resource("datavolume"), volume.DataVolume.Name)
+			}
+			return errors.NewInternalError(err)
+		}
+	}
+	if volume.Name == "" {
+		return errors.NewBadRequest("Empty volume name")
+	}
+
+	return nil
+}
+
+func (app *SubresourceAPIApp) validateDisk(disk *v1.Disk, vmi *v1.VirtualMachineInstance) *errors.StatusError {
+	if disk.Name != "" {
+		found := false
+		for _, volume := range vmi.Spec.Volumes {
+			// Find the disk name in the volumes
+			if volume.Name == disk.Name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return errors.NewBadRequest(fmt.Sprintf("Disk %s, not found in VMI volumes", disk.Name))
+		}
+		return nil
+	}
+	return errors.NewBadRequest("Empty disk name")
+}
+
+// RemoveVolumeRequestHandler handles the subresource for hot plugging a volume and disk.
+func (app *SubresourceAPIApp) RemoveVolumeRequestHandler(request *restful.Request, response *restful.Response) {
+	name := request.PathParameter("name")
+	namespace := request.PathParameter("namespace")
+
+	opts := &v1.HotplugVolumeRequest{}
+	if request.Request.Body != nil {
+		defer request.Request.Body.Close()
+		err := yaml.NewYAMLOrJSONDecoder(request.Request.Body, 1024).Decode(opts)
+		switch err {
+		case io.EOF, nil:
+			break
+		default:
+			writeError(errors.NewBadRequest(fmt.Sprintf("Can not unmarshal Request body to struct, error: %s",
+				err)), response)
+			return
+		}
+	} else {
+		writeError(errors.NewBadRequest("Request with no body, a new name is expected as the request body"),
+			response)
+		return
+	}
+
+	if opts.Volume == nil || opts.Volume.DataVolume == nil || opts.Volume.DataVolume.Name == "" {
+		writeError(errors.NewBadRequest("Request should contain a volume name"),
+			response)
+		return
+	}
+
+	vmi, statusErr := app.fetchVirtualMachineInstance(name, namespace)
+	if statusErr != nil {
+		writeError(statusErr, response)
+		return
+	}
+	if vmi.Status.Phase != v1.Running {
+		writeError(errors.NewForbidden(v1.Resource("virtualmachineinstance"), vmi.Name, fmt.Errorf("Virtual Machine instance not running")), response)
+		return
+	}
+
+	appErr := app.removeVolumeAndDisk(opts.Volume, vmi)
+	if appErr != nil {
+		writeError(appErr, response)
+		return
+	}
+	// Really should be doing a patch here, but seems all patch functions only take subresources, and I am updating the spec.
+	_, err := app.virtCli.VirtualMachineInstance(namespace).Update(vmi)
+	if err != nil {
+		writeError(errors.NewInternalError(err), response)
+		return
+	}
+
+	response.WriteHeader(http.StatusAccepted)
+}
+
+func (app *SubresourceAPIApp) removeVolumeAndDisk(removeVolume *v1.Volume, vmi *v1.VirtualMachineInstance) *errors.StatusError {
+	newVolumes := make([]v1.Volume, 0)
+	foundVolume := false
+	name := ""
+	for i, volume := range vmi.Spec.Volumes {
+		if volume.DataVolume != nil && removeVolume.DataVolume != nil && volume.DataVolume.Name == removeVolume.DataVolume.Name && app.isHotplugged(volume.Name, vmi) {
+			name = volume.Name
+			newVolumes = append(newVolumes, vmi.Spec.Volumes[:i]...)
+			newVolumes = append(newVolumes, vmi.Spec.Volumes[i+1:]...)
+			foundVolume = true
+			break
+		}
+	}
+	if foundVolume {
+		vmi.Spec.Volumes = newVolumes
+	} else {
+		return errors.NewBadRequest("Volume not found")
+	}
+	newDisks := make([]v1.Disk, 0)
+	foundDisk := false
+	for i, disk := range vmi.Spec.Domain.Devices.Disks {
+		if disk.Name == name {
+			newDisks = append(newDisks, vmi.Spec.Domain.Devices.Disks[:i]...)
+			newDisks = append(newDisks, vmi.Spec.Domain.Devices.Disks[i+1:]...)
+			foundDisk = true
+			break
+		}
+	}
+	if foundDisk {
+		vmi.Spec.Domain.Devices.Disks = newDisks
+	} else {
+		// Check for file systems
+		newFs := make([]v1.Filesystem, 0)
+		foundFs := false
+		for i, fs := range vmi.Spec.Domain.Devices.Filesystems {
+			if fs.Name == name {
+				newFs = append(newFs, vmi.Spec.Domain.Devices.Filesystems[:i]...)
+				newFs = append(newFs, vmi.Spec.Domain.Devices.Filesystems[i+1:]...)
+				foundFs = true
+				break
+			}
+		}
+		if foundFs {
+			vmi.Spec.Domain.Devices.Filesystems = newFs
+		} else {
+			return errors.NewBadRequest(fmt.Sprintf("Filesystem or Disk %s not found", removeVolume.DataVolume.Name))
+		}
+	}
+
+	return nil
+}
+
+func (app *SubresourceAPIApp) isHotplugged(name string, vmi *v1.VirtualMachineInstance) bool {
+	_, ok := vmi.Status.HotpluggedVolumes[name]
+	return ok
+}

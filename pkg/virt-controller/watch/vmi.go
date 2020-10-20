@@ -28,9 +28,7 @@ import (
 
 	k8sv1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/cache"
@@ -385,7 +383,7 @@ func (c *VMIController) handleHotplugVolumes(hotplugVolumes []virtv1.Volume, cur
 	if len(newVolumes) > 0 {
 		// New volumes detected, create hotplug pods.
 		for _, volume := range newVolumes {
-			hotplugPodTemplate, err := c.createHotplugPodTemplate(volume, virtLauncherPod, vmi)
+			hotplugPodTemplate, err := c.createHotplugPodTemplate(&volume, virtLauncherPod, vmi)
 			if err != nil {
 				return err
 			}
@@ -403,12 +401,15 @@ func (c *VMIController) handleHotplugVolumes(hotplugVolumes []virtv1.Volume, cur
 }
 
 func (c *VMIController) deleteHotplugPodForVolume(volume k8sv1.Volume, hotplugPods []*k8sv1.Pod, logger *log.FilteredLogger) error {
+	zero := int64(0)
 	for _, pod := range hotplugPods {
 		for _, podVolume := range pod.Spec.Volumes {
 			if podVolume.Name == volume.Name && podVolume.PersistentVolumeClaim != nil {
 				logger.V(1).Infof("Deleting pod: %s", pod.Name)
 				// The deletePod thinks the VMI is the controller, but its the virt launcher pod.
-				err := c.clientset.CoreV1().Pods(pod.GetNamespace()).Delete(pod.Name, &v1.DeleteOptions{})
+				err := c.clientset.CoreV1().Pods(pod.GetNamespace()).Delete(pod.Name, &v1.DeleteOptions{
+					GracePeriodSeconds: &zero,
+				})
 				if err != nil {
 					return err
 				}
@@ -418,7 +419,7 @@ func (c *VMIController) deleteHotplugPodForVolume(volume k8sv1.Volume, hotplugPo
 	return nil
 }
 
-func (c *VMIController) createHotplugPodTemplate(volume virtv1.Volume, ownerPod *k8sv1.Pod, vmi *virtv1.VirtualMachineInstance) (*k8sv1.Pod, error) {
+func (c *VMIController) createHotplugPodTemplate(volume *virtv1.Volume, ownerPod *k8sv1.Pod, vmi *virtv1.VirtualMachineInstance) (*k8sv1.Pod, error) {
 	var claimName string
 	if volume.DataVolume != nil {
 		// TODO, look up the correct PVC name based on the datavolume, right now they match, but that will not always be true.
@@ -437,94 +438,7 @@ func (c *VMIController) createHotplugPodTemplate(volume virtv1.Volume, ownerPod 
 	if !exists {
 		return nil, fmt.Errorf("Unable to hotplug, claim %s not found", claimName)
 	}
-
-	pod := &k8sv1.Pod{
-		ObjectMeta: v1.ObjectMeta{
-			Name: "hp-volume-" + volume.Name + "-" + ownerPod.Name,
-			OwnerReferences: []v1.OwnerReference{
-				*v1.NewControllerRef(ownerPod, schema.GroupVersionKind{
-					Group:   k8sv1.SchemeGroupVersion.Group,
-					Version: k8sv1.SchemeGroupVersion.Version,
-					Kind:    "Pod",
-				}),
-			},
-			Labels: map[string]string{
-				virtv1.AppLabel: "hotplug-disk",
-			},
-		},
-		Spec: k8sv1.PodSpec{
-			Containers: []k8sv1.Container{
-				{
-					Name:    "hotplug-disk",
-					Image:   "registry:5000/kubevirt/virt-launcher:devel", // TODO, properly plumb in an image.
-					Command: []string{"/bin/sh", "-c", "while true; do echo hello; sleep 2;done"},
-					Resources: k8sv1.ResourceRequirements{ //TODO, determine if we need some kind of limits and requests.
-						Limits: map[k8sv1.ResourceName]resource.Quantity{
-							k8sv1.ResourceCPU:    *resource.NewQuantity(0, resource.DecimalSI),
-							k8sv1.ResourceMemory: *resource.NewQuantity(0, resource.DecimalSI)},
-						Requests: map[k8sv1.ResourceName]resource.Quantity{
-							k8sv1.ResourceCPU:    *resource.NewQuantity(0, resource.DecimalSI),
-							k8sv1.ResourceMemory: *resource.NewQuantity(0, resource.DecimalSI)},
-					},
-				},
-			},
-			SecurityContext: &k8sv1.PodSecurityContext{
-				SELinuxOptions: &k8sv1.SELinuxOptions{
-					Level: "s0",
-					Type:  "virt_launcher.process",
-				},
-			},
-			Affinity: &k8sv1.Affinity{
-				PodAffinity: &k8sv1.PodAffinity{
-					RequiredDuringSchedulingIgnoredDuringExecution: []k8sv1.PodAffinityTerm{
-						{
-							LabelSelector: &v1.LabelSelector{
-								MatchLabels: ownerPod.GetLabels(),
-							},
-							TopologyKey: "kubernetes.io/hostname",
-						},
-					},
-				},
-			},
-			Volumes: []k8sv1.Volume{
-				{
-					Name: volume.Name,
-					VolumeSource: k8sv1.VolumeSource{
-						PersistentVolumeClaim: &k8sv1.PersistentVolumeClaimVolumeSource{
-							ClaimName: pvc.Name,
-							ReadOnly:  false,
-						},
-					},
-				},
-				{
-					Name: "hotplug-disks",
-					VolumeSource: k8sv1.VolumeSource{
-						EmptyDir: &k8sv1.EmptyDirVolumeSource{},
-					},
-				},
-			},
-		},
-	}
-
-	if isBlock {
-		pod.Spec.Containers[0].VolumeDevices = []k8sv1.VolumeDevice{
-			{
-				Name:       volume.Name,
-				DevicePath: "/dev/hotplugblockdevice",
-			},
-		}
-		pod.Spec.SecurityContext = &k8sv1.PodSecurityContext{
-			RunAsUser: &[]int64{0}[0],
-		}
-	} else {
-		pod.Spec.Containers[0].VolumeMounts = []k8sv1.VolumeMount{
-			{
-				Name:      volume.Name,
-				MountPath: "/pvc",
-			},
-		}
-	}
-	return pod, nil
+	return c.templateService.RenderHotplugPodTemplate(volume, ownerPod, vmi, pvc.Name, isBlock)
 }
 
 func (c *VMIController) getNewHotplugVolumes(hotplugPods []*k8sv1.Pod, hotplugVolumes []virtv1.Volume) []virtv1.Volume {

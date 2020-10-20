@@ -1427,6 +1427,14 @@ type RenameOptions struct {
 	OldName         *string `json:"oldName,omitempty"`
 }
 
+// HotplugVolumeRequest is provided when hot plugging a volume and disk
+type HotplugVolumeRequest struct {
+	Volume     *Volume     `json:"volume"`
+	Disk       *Disk       `json:"disk,omitempty"`
+	FileSystem *Filesystem `json:"fileSystem,omitempty"`
+	Ephemeral  bool        `json:"ephemeral,omitempty"`
+}
+
 // KubeVirtConfiguration holds all kubevirt configurations
 // +k8s:openapi-gen=true
 type KubeVirtConfiguration struct {

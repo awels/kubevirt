@@ -205,3 +205,27 @@ func (v *vm) Rename(name string, options *v1.RenameOptions) error {
 
 	return v.restClient.Put().RequestURI(uri).Body([]byte(optsJson)).Do().Error()
 }
+
+func (v *vm) AddVolume(name string, hotplugRequest *v1.HotplugVolumeRequest) error {
+	uri := fmt.Sprintf(vmSubresourceURL, v1.ApiStorageVersion, v.namespace, name, "addvolume")
+
+	hpJSON, err := json.Marshal(hotplugRequest)
+
+	if err != nil {
+		return err
+	}
+
+	return v.restClient.Put().RequestURI(uri).Body([]byte(hpJSON)).Do().Error()
+}
+
+func (v *vm) RemoveVolume(name string, hotplugRequest *v1.HotplugVolumeRequest) error {
+	uri := fmt.Sprintf(vmSubresourceURL, v1.ApiStorageVersion, v.namespace, name, "removevolume")
+
+	hpJSON, err := json.Marshal(hotplugRequest)
+
+	if err != nil {
+		return err
+	}
+
+	return v.restClient.Put().RequestURI(uri).Body([]byte(hpJSON)).Do().Error()
+}

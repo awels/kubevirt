@@ -202,6 +202,8 @@ type VirtualMachineInterface interface {
 	Stop(name string) error
 	Migrate(name string) error
 	Rename(name string, options *v1.RenameOptions) error
+	AddVolume(name string, hotplugRequest *v1.HotplugVolumeRequest) error
+	RemoveVolume(name string, hotplugRequest *v1.HotplugVolumeRequest) error
 }
 
 type VirtualMachineInstanceMigrationInterface interface {
