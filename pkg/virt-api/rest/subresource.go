@@ -930,17 +930,14 @@ func (app *SubresourceAPIApp) AddVolumeRequestHandler(request *restful.Request, 
 			response)
 	}
 
-	if !opts.Ephemeral {
-		// TODO: Call a mechanism to update the VM spec itself (Using VirtualMachineState)
-	}
-
 	vmi, statusErr := app.fetchVirtualMachineInstance(name, namespace)
 	if statusErr != nil {
 		writeError(statusErr, response)
 		return
 	}
 	if vmi.Status.Phase != v1.Running {
-		writeError(errors.NewForbidden(v1.Resource("virtualmachineinstance"), vmi.Name, fmt.Errorf("Virtual Machine instance not running")), response)
+		writeError(errors.NewConflict(v1.Resource("virtualmachineinstance"), vmi.Name, fmt.Errorf("VMI is not running")), response)
+		return
 	}
 
 	if !app.checkIfVolumeExist(opts, vmi) {
@@ -970,8 +967,55 @@ func (app *SubresourceAPIApp) AddVolumeRequestHandler(request *restful.Request, 
 			writeError(errors.NewInternalError(err), response)
 			return
 		}
+		if !opts.Ephemeral {
+			// TODO: Call a mechanism to update the VM spec itself (Using VirtualMachineState)
+			// Make sure the VM is stopped and was not scheduled for renaming already
+			vm, statusErr := app.fetchVirtualMachine(name, namespace)
+
+			if statusErr != nil {
+				writeError(statusErr, response)
+				return
+			}
+			statusErr = app.addVMVolumeRequest(vm, opts)
+			if statusErr != nil {
+				writeError(statusErr, response)
+				return
+			}
+		}
 	}
 	response.WriteHeader(http.StatusAccepted)
+}
+
+func (app *SubresourceAPIApp) addVMVolumeRequest(vm *v1.VirtualMachine, hotplugRequest *v1.HotplugVolumeRequest) *errors.StatusError {
+
+	// Check for hotplug request on VM
+	for _, changeRequest := range vm.Status.StateChangeRequests {
+		if changeRequest.Action == v1.AddVolumeRequest && changeRequest.Volume.Name == hotplugRequest.Volume.Name {
+			return errors.NewConflict(v1.Resource("virtualmachine"), vm.Name, fmt.Errorf("Volume %s already scheduled to be added", hotplugRequest.Volume.DataVolume.Name))
+		}
+	}
+
+	changeRequest := v1.VirtualMachineStateChangeRequest{
+		Action: v1.AddVolumeRequest,
+		Volume: hotplugRequest.Volume,
+	}
+	if hotplugRequest.Disk != nil {
+		changeRequest.Disk = hotplugRequest.Disk
+	} else if hotplugRequest.FileSystem != nil {
+		changeRequest.FileSystem = hotplugRequest.FileSystem
+	}
+
+	hotplugRequestJSON, err := getChangeRequestJson(vm, changeRequest)
+	if err != nil {
+		return errors.NewInternalError(err)
+	}
+
+	err = app.statusUpdater.PatchStatus(vm, types.JSONPatchType, []byte(hotplugRequestJSON))
+	if err != nil {
+		return errors.NewInternalError(err)
+	}
+
+	return nil
 }
 
 func (app *SubresourceAPIApp) checkIfVolumeExist(request *v1.HotplugVolumeRequest, vmi *v1.VirtualMachineInstance) bool {
@@ -1069,7 +1113,7 @@ func (app *SubresourceAPIApp) RemoveVolumeRequestHandler(request *restful.Reques
 		return
 	}
 	if vmi.Status.Phase != v1.Running {
-		writeError(errors.NewForbidden(v1.Resource("virtualmachineinstance"), vmi.Name, fmt.Errorf("Virtual Machine instance not running")), response)
+		writeError(errors.NewConflict(v1.Resource("virtualmachineinstance"), vmi.Name, fmt.Errorf("VMI is not running")), response)
 		return
 	}
 

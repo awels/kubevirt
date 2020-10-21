@@ -269,10 +269,13 @@ func (VirtualMachineStatus) SwaggerDoc() map[string]string {
 
 func (VirtualMachineStateChangeRequest) SwaggerDoc() map[string]string {
 	return map[string]string{
-		"":       "+k8s:openapi-gen=true",
-		"action": "Indicates the type of action that is requested. e.g. Start or Stop",
-		"data":   "Provides additional data in order to perform the Action",
-		"uid":    "Indicates the UUID of an existing Virtual Machine Instance that this change request applies to -- if applicable",
+		"":           "+k8s:openapi-gen=true",
+		"action":     "Indicates the type of action that is requested. e.g. Start or Stop",
+		"data":       "Provides additional data in order to perform the Action",
+		"uid":        "Indicates the UUID of an existing Virtual Machine Instance that this change request applies to -- if applicable",
+		"volume":     "Indicates the volume to permanently add to the VM.",
+		"disk":       "Indicates the disk to permanently add to the VM.",
+		"fileSystem": "Indicates the filesystem to permanently add to the VM.",
 	}
 }
 

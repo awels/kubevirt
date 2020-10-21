@@ -3086,6 +3086,21 @@ func (in *VirtualMachineStateChangeRequest) DeepCopyInto(out *VirtualMachineStat
 		*out = new(types.UID)
 		**out = **in
 	}
+	if in.Volume != nil {
+		in, out := &in.Volume, &out.Volume
+		*out = new(Volume)
+		(*in).DeepCopyInto(*out)
+	}
+	if in.Disk != nil {
+		in, out := &in.Disk, &out.Disk
+		*out = new(Disk)
+		(*in).DeepCopyInto(*out)
+	}
+	if in.FileSystem != nil {
+		in, out := &in.FileSystem, &out.FileSystem
+		*out = new(Filesystem)
+		(*in).DeepCopyInto(*out)
+	}
 	return
 }
 

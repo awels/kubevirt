@@ -49,11 +49,11 @@ const (
 var (
 	forceRestart bool
 	gracePeriod  int = -1
-	volumeName string
-	diskName string
-	serial string
-	ephemeral bool
-	bus string
+	volumeName   string
+	diskName     string
+	serial       string
+	ephemeral    bool
+	bus          string
 )
 
 func NewStartCommand(clientConfig clientcmd.ClientConfig) *cobra.Command {

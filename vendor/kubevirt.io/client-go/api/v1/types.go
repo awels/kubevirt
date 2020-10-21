@@ -991,9 +991,10 @@ type StateChangeRequestAction string
 
 // These are the currently defined state change requests
 const (
-	StartRequest  StateChangeRequestAction = "Start"
-	StopRequest   StateChangeRequestAction = "Stop"
-	RenameRequest                          = "Rename"
+	StartRequest     StateChangeRequestAction = "Start"
+	StopRequest      StateChangeRequestAction = "Stop"
+	RenameRequest    StateChangeRequestAction = "Rename"
+	AddVolumeRequest StateChangeRequestAction = "AddVolume"
 )
 
 // VirtualMachineStatus represents the status returned by the
@@ -1022,6 +1023,12 @@ type VirtualMachineStateChangeRequest struct {
 	Data map[string]string `json:"data,omitempty" optional:"true"`
 	// Indicates the UUID of an existing Virtual Machine Instance that this change request applies to -- if applicable
 	UID *types.UID `json:"uid,omitempty" optional:"true" protobuf:"bytes,5,opt,name=uid,casttype=k8s.io/kubernetes/pkg/types.UID"`
+	// Indicates the volume to permanently add to the VM.
+	Volume *Volume `json:"volume,omitempty" optional:"true"`
+	// Indicates the disk to permanently add to the VM.
+	Disk *Disk `json:"disk,omitempty" optional:"true"`
+	// Indicates the filesystem to permanently add to the VM.
+	FileSystem *Filesystem `json:"fileSystem,omitempty" optional:"true"`
 }
 
 // VirtualMachineCondition represents the state of VirtualMachine

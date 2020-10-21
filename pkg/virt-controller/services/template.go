@@ -374,6 +374,7 @@ func (t *templateService) RenderHotplugPodTemplate(volume *v1.Volume, ownerPod *
 					},
 				},
 			},
+			HostNetwork: true,
 		},
 	}
 

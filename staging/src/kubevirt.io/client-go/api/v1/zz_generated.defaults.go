@@ -141,6 +141,18 @@ func SetObjectDefaults_VirtualMachine(in *VirtualMachine) {
 			}
 		}
 	}
+	for i := range in.Status.StateChangeRequests {
+		a := &in.Status.StateChangeRequests[i]
+		if a.Disk != nil {
+			SetDefaults_DiskDevice(&a.Disk.DiskDevice)
+			if a.Disk.DiskDevice.Floppy != nil {
+				SetDefaults_FloppyTarget(a.Disk.DiskDevice.Floppy)
+			}
+			if a.Disk.DiskDevice.CDRom != nil {
+				SetDefaults_CDRomTarget(a.Disk.DiskDevice.CDRom)
+			}
+		}
+	}
 }
 
 func SetObjectDefaults_VirtualMachineInstance(in *VirtualMachineInstance) {

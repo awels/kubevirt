@@ -1428,32 +1428,14 @@ func isBlockDeviceVolume(volumeName string, hotplugVolumes map[string]types.UID)
 	}
 	fileInfo, err := os.Stat(path)
 	if err == nil {
-		if (fileInfo.Mode() & os.ModeDevice) != 0 {
-			return true, nil
-		}
-		return false, fmt.Errorf("found %v, but it's not a block device", path)
-	}
-	if os.IsNotExist(err) {
-		// cross check: is it a filesystem volume
-		path = api.GetFilesystemVolumePath(volumeName)
-		for hpVolumeName := range hotplugVolumes {
-			if volumeName == hpVolumeName {
-				path = api.GetHotplugFilesystemVolumePath(volumeName)
-				break
+		if !fileInfo.IsDir() {
+			if (fileInfo.Mode() & os.ModeDevice) != 0 {
+				return true, nil
 			}
-		}
-		fileInfo, err := os.Stat(path)
-		if err == nil {
-			if fileInfo.Mode().IsRegular() {
-				return false, nil
-			}
-			return false, fmt.Errorf("found %v, but it's not a regular file", path)
-		}
-		if os.IsNotExist(err) {
-			return false, fmt.Errorf("neither found block device nor regular file for volume %v", volumeName)
+			return false, fmt.Errorf("found %v, but it's not a block device", path)
 		}
 	}
-	return false, fmt.Errorf("error checking for block device: %v", err)
+	return false, nil
 }
 
 func (l *LibvirtDomainManager) getDomainSpec(dom cli.VirDomain) (*api.DomainSpec, error) {

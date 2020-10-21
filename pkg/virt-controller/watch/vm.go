@@ -351,6 +351,57 @@ func (c *VMController) handleVMRenameRequest(vm *virtv1.VirtualMachine, newName 
 	return false, nil
 }
 
+func (c *VMController) handleVMAddVolumeRequest(vm *virtv1.VirtualMachine, changeRequest *virtv1.VirtualMachineStateChangeRequest) (bool, error) {
+	vmCopy := vm.DeepCopy()
+	if changeRequest.Volume != nil {
+		foundVolume := false
+		for _, existingVolume := range vmCopy.Spec.Template.Spec.Volumes {
+			if existingVolume.Name == changeRequest.Volume.Name {
+				foundVolume = true
+				break
+			}
+		}
+		if !foundVolume {
+			vmCopy.Spec.Template.Spec.Volumes = append(vmCopy.Spec.Template.Spec.Volumes, *changeRequest.Volume)
+		}
+	}
+	if changeRequest.Disk != nil {
+		foundDisk := false
+		for _, existingDisk := range vmCopy.Spec.Template.Spec.Domain.Devices.Disks {
+			if existingDisk.Name == changeRequest.Disk.Name {
+				foundDisk = true
+				break
+			}
+		}
+		if !foundDisk {
+			vmCopy.Spec.Template.Spec.Domain.Devices.Disks = append(vmCopy.Spec.Template.Spec.Domain.Devices.Disks, *changeRequest.Disk)
+		}
+	}
+	if changeRequest.FileSystem != nil {
+		foundFileSystem := false
+		for _, existingFileSystem := range vmCopy.Spec.Template.Spec.Domain.Devices.Filesystems {
+			if existingFileSystem.Name == changeRequest.FileSystem.Name {
+				foundFileSystem = true
+				break
+			}
+		}
+		if !foundFileSystem {
+			vmCopy.Spec.Template.Spec.Domain.Devices.Filesystems = append(vmCopy.Spec.Template.Spec.Domain.Devices.Filesystems, *changeRequest.FileSystem)
+		}
+	}
+
+	if !reflect.DeepEqual(vm, vmCopy) {
+		// Update this VM
+		_, err := c.clientset.VirtualMachine(vm.Namespace).Update(vmCopy)
+
+		if err != nil {
+			return true, err
+		}
+	}
+	return false, nil
+}
+
+
 func (c *VMController) listDataVolumesForVM(vm *virtv1.VirtualMachine) ([]*cdiv1.DataVolume, error) {
 
 	var dataVolumes []*cdiv1.DataVolume
@@ -1171,6 +1222,19 @@ func (c *VMController) updateStatus(vmOrig *virtv1.VirtualMachine, vmi *virtv1.V
 						Errorf("Rename request for vm %s failed: %v", vm.Name, err)
 				} else {
 					vmRenamedAndDeleted = !retry
+				}
+			}
+		case virtv1.AddVolumeRequest:
+			if stateChange.Volume == nil || (stateChange.Disk == nil && stateChange.FileSystem == nil) {
+				log.Log.Object(vm).V(4).Errorf("Add volume is missing 'volume' or 'disk' or 'fileSystem' field")
+				clearChangeRequest = true
+			} else {
+				retry, err := c.handleVMAddVolumeRequest(vm, &stateChange)
+				if err != nil {
+					log.Log.Object(vm).V(4).
+						Errorf("Add volume request for vm %s failed: %v", vm.Name, err)
+				} else {
+					clearChangeRequest = !retry
 				}
 			}
 		}
