@@ -473,7 +473,9 @@ func (c *Controller) updateStatus(vmi *virtv1.VirtualMachineInstance, pod *k8sv1
 		return fmt.Errorf("Error detecting vmi pods: %v", err)
 	}
 
-	c.syncReadyConditionFromPod(vmiCopy, pod)
+	if controller.PodExists(pod) {
+		c.syncReadyConditionFromPod(vmiCopy, pod)
+	}
 	if vmiPodExists {
 		var foundImage string
 		for _, container := range pod.Spec.Containers {
@@ -484,12 +486,14 @@ func (c *Controller) updateStatus(vmi *virtv1.VirtualMachineInstance, pod *k8sv1
 		}
 		vmiCopy = c.setLauncherContainerInfo(vmiCopy, foundImage)
 
-		if err := c.syncPausedConditionToPod(vmiCopy, pod); err != nil {
-			return fmt.Errorf("error syncing paused condition to pod: %v", err)
-		}
+		if controller.PodExists(pod) {
+			if err := c.syncPausedConditionToPod(vmiCopy, pod); err != nil {
+				return fmt.Errorf("error syncing paused condition to pod: %v", err)
+			}
 
-		if err := c.syncDynamicLabelsToPod(vmiCopy, pod); err != nil {
-			return fmt.Errorf("error syncing labels to pod: %v", err)
+			if err := c.syncDynamicLabelsToPod(vmiCopy, pod); err != nil {
+				return fmt.Errorf("error syncing labels to pod: %v", err)
+			}
 		}
 	}
 
@@ -911,6 +915,7 @@ func (c *Controller) syncPausedConditionToPod(vmi *virtv1.VirtualMachineInstance
 		return fmt.Errorf("error preparing pod patch: %v", err)
 	}
 	log.Log.V(3).Object(pod).Infof("Patching pod conditions")
+	log.Log.Infof("Patch: %s", string(patchBytes))
 
 	_, err = c.clientset.CoreV1().Pods(pod.Namespace).Patch(context.TODO(), pod.Name, types.JSONPatchType, patchBytes, v1.PatchOptions{}, "status")
 	// We could not retry if the "test" fails but we have no sane way to detect that right now:
@@ -982,6 +987,7 @@ func (c *Controller) sync(vmi *virtv1.VirtualMachineInstance, pod *k8sv1.Pod, da
 	}
 
 	if !controller.PodExists(pod) {
+		log.DefaultLogger().Info("VMI pod doesn't exist, creating it")
 		// If we came ever that far to detect that we already created a pod, we don't create it again
 		if !vmi.IsUnprocessed() {
 			return nil, pod
@@ -1034,23 +1040,26 @@ func (c *Controller) sync(vmi *virtv1.VirtualMachineInstance, pod *k8sv1.Pod, da
 		if validateErr := errors.Join(validateErrors...); validateErrors != nil {
 			return common.NewSyncError(fmt.Errorf("failed create validation: %v", validateErr), "FailedCreateValidation"), pod
 		}
-
-		vmiKey := controller.VirtualMachineInstanceKey(vmi)
-		c.podExpectations.ExpectCreations(vmiKey, 1)
-		pod, err := c.clientset.CoreV1().Pods(vmi.GetNamespace()).Create(context.Background(), templatePod, v1.CreateOptions{})
-		if k8serrors.IsForbidden(err) && strings.Contains(err.Error(), "violates PodSecurity") {
-			psaErr := fmt.Errorf("failed to create pod for vmi %s/%s, it needs a privileged namespace to run: %w", vmi.GetNamespace(), vmi.GetName(), err)
-			c.recorder.Eventf(vmi, k8sv1.EventTypeWarning, controller.FailedCreatePodReason, services.FailedToRenderLaunchManifestErrFormat, psaErr)
-			c.podExpectations.CreationObserved(vmiKey)
-			return common.NewSyncError(psaErr, controller.FailedCreatePodReason), nil
+		if !vmi.IsMigrationTarget() {
+			log.DefaultLogger().Infof("Creating VMI pod")
+			vmiKey := controller.VirtualMachineInstanceKey(vmi)
+			c.podExpectations.ExpectCreations(vmiKey, 1)
+			pod, err := c.clientset.CoreV1().Pods(vmi.GetNamespace()).Create(context.Background(), templatePod, v1.CreateOptions{})
+			if k8serrors.IsForbidden(err) && strings.Contains(err.Error(), "violates PodSecurity") {
+				psaErr := fmt.Errorf("failed to create pod for vmi %s/%s, it needs a privileged namespace to run: %w", vmi.GetNamespace(), vmi.GetName(), err)
+				c.recorder.Eventf(vmi, k8sv1.EventTypeWarning, controller.FailedCreatePodReason, services.FailedToRenderLaunchManifestErrFormat, psaErr)
+				c.podExpectations.CreationObserved(vmiKey)
+				return common.NewSyncError(psaErr, controller.FailedCreatePodReason), nil
+			}
+			if err != nil {
+				c.recorder.Eventf(vmi, k8sv1.EventTypeWarning, controller.FailedCreatePodReason, "Error creating pod: %v", err)
+				c.podExpectations.CreationObserved(vmiKey)
+				return common.NewSyncError(fmt.Errorf("failed to create virtual machine pod: %v", err), controller.FailedCreatePodReason), nil
+			}
+			c.recorder.Eventf(vmi, k8sv1.EventTypeNormal, controller.SuccessfulCreatePodReason, "Created virtual machine pod %s", pod.Name)
+			return nil, pod
 		}
-		if err != nil {
-			c.recorder.Eventf(vmi, k8sv1.EventTypeWarning, controller.FailedCreatePodReason, "Error creating pod: %v", err)
-			c.podExpectations.CreationObserved(vmiKey)
-			return common.NewSyncError(fmt.Errorf("failed to create virtual machine pod: %v", err), controller.FailedCreatePodReason), nil
-		}
-		c.recorder.Eventf(vmi, k8sv1.EventTypeNormal, controller.SuccessfulCreatePodReason, "Created virtual machine pod %s", pod.Name)
-		return nil, pod
+		return nil, nil
 	}
 
 	if !isWaitForFirstConsumer {
@@ -1539,17 +1548,20 @@ func (c *Controller) listPodsFromNamespace(namespace string) ([]*k8sv1.Pod, erro
 }
 
 func (c *Controller) setActivePods(vmi *virtv1.VirtualMachineInstance) (*virtv1.VirtualMachineInstance, error) {
+	log.DefaultLogger().Info("Figuring out active pods")
 	pods, err := c.listPodsFromNamespace(vmi.Namespace)
 	if err != nil {
 		return nil, err
 	}
-
+	log.DefaultLogger().Infof("Found %d pods", len(pods))
 	activePods := make(map[types.UID]string)
 	count := 0
 	for _, pod := range pods {
+		log.DefaultLogger().Infof("Pod: %s", pod.Name)
 		if !controller.IsControlledBy(pod, vmi) {
 			continue
 		}
+		log.DefaultLogger().Infof("Pod %s is controlled by VMI %s", pod.Name, vmi.Name)
 
 		count++
 		activePods[pod.UID] = pod.Spec.NodeName

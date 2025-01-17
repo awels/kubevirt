@@ -25644,6 +25644,20 @@ func schema_kubevirtio_api_core_v1_VirtualMachineInstanceMigrationSpec(ref commo
 							Format:      "",
 						},
 					},
+					"operation": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The type of operation, either source or target. Target will create a new VMI (if not existing already) and create a receiving virt-launcher pod. Source will connect to the connect URL to start the migration if the target is ready",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"connectURL": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Required if operation is source, this is the url the virt-handler will connect to to perform the migration",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
 				},
 			},
 		},
@@ -25684,6 +25698,20 @@ func schema_kubevirtio_api_core_v1_VirtualMachineInstanceMigrationState(ref comm
 					"targetNodeAddress": {
 						SchemaProps: spec.SchemaProps{
 							Description: "The address of the target node to use for the migration",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"targetSyncAddress": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The url to use to synchronize the VMI with the target",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"remoteTargetNodeAddress": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The address of the remote target node to use for the migration",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -25773,9 +25801,16 @@ func schema_kubevirtio_api_core_v1_VirtualMachineInstanceMigrationState(ref comm
 							Format:      "",
 						},
 					},
-					"migrationUid": {
+					"sourceMigrationUid": {
 						SchemaProps: spec.SchemaProps{
-							Description: "The VirtualMachineInstanceMigration object associated with this migration",
+							Description: "The source VirtualMachineInstanceMigration object associated with this migration",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"targetMigrationUid": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The target VirtualMachineInstanceMigration object associated with this migration",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -25898,6 +25933,13 @@ func schema_kubevirtio_api_core_v1_VirtualMachineInstanceMigrationStatus(ref com
 						SchemaProps: spec.SchemaProps{
 							Description: "Represents the status of a live migration",
 							Ref:         ref("kubevirt.io/api/core/v1.VirtualMachineInstanceMigrationState"),
+						},
+					},
+					"syncEndpoint": {
+						SchemaProps: spec.SchemaProps{
+							Description: "SyncEndpoint is the URL that the source will use to synchronize the VMI with the target",
+							Type:        []string{"string"},
+							Format:      "",
 						},
 					},
 				},

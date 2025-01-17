@@ -334,7 +334,7 @@ func (l *LibvirtDomainManager) startMigration(vmi *v1.VirtualMachineInstance, op
 
 func (l *LibvirtDomainManager) initializeMigrationMetadata(vmi *v1.VirtualMachineInstance, migrationMode v1.MigrationMode) (bool, error) {
 	migrationMetadata, exists := l.metadataCache.Migration.Load()
-	if exists && migrationMetadata.UID == vmi.Status.MigrationState.MigrationUID {
+	if exists && migrationMetadata.UID == vmi.Status.MigrationState.SourceMigrationUID {
 		if migrationMetadata.EndTimestamp == nil {
 			// don't stop on currently executing migrations
 			return true, nil
@@ -348,7 +348,7 @@ func (l *LibvirtDomainManager) initializeMigrationMetadata(vmi *v1.VirtualMachin
 
 	now := metav1.Now()
 	m := api.MigrationMetadata{
-		UID:            vmi.Status.MigrationState.MigrationUID,
+		UID:            vmi.Status.MigrationState.SourceMigrationUID,
 		StartTimestamp: &now,
 		Mode:           migrationMode,
 	}
@@ -676,7 +676,7 @@ func (m *migrationMonitor) startMonitor() {
 			}
 			logInterval++
 			if logInterval%monitorLogInterval == 0 {
-				logMigrationInfo(logger, string(vmi.Status.MigrationState.MigrationUID), stats)
+				logMigrationInfo(logger, string(vmi.Status.MigrationState.SourceMigrationUID), stats)
 			}
 		case libvirt.DOMAIN_JOB_NONE:
 			completedJobInfo = m.determineNonRunningMigrationStatus(dom)

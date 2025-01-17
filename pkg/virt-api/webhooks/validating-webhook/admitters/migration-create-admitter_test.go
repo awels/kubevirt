@@ -34,6 +34,7 @@ import (
 	kubevirtfake "kubevirt.io/client-go/kubevirt/fake"
 
 	"kubevirt.io/kubevirt/pkg/libvmi"
+	"kubevirt.io/kubevirt/pkg/pointer"
 	"kubevirt.io/kubevirt/pkg/virt-api/webhooks"
 	"kubevirt.io/kubevirt/pkg/virt-api/webhooks/validating-webhook/admitters"
 )
@@ -66,6 +67,41 @@ var _ = Describe("Validating MigrationCreate Admitter", func() {
 
 		resp := migrationCreateAdmitter.Admit(context.Background(), ar)
 		Expect(resp.Allowed).To(BeFalse())
+	})
+
+	It("should reject Migration when no VMI exists", func() {
+		migration := &v1.VirtualMachineInstanceMigration{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+			},
+			Spec: v1.VirtualMachineInstanceMigrationSpec{
+				VMIName: "missing",
+			},
+		}
+		virtClient := kubevirtfake.NewSimpleClientset()
+		migrationCreateAdmitter := admitters.NewMigrationCreateAdmitter(virtClient)
+		ar, err := newAdmissionReviewForVMIMCreation(migration)
+		Expect(err).ToNot(HaveOccurred())
+		resp := migrationCreateAdmitter.Admit(context.Background(), ar)
+		Expect(resp.Allowed).To(BeFalse())
+	})
+
+	It("should allow target Migration when no VMI exists", func() {
+		migration := &v1.VirtualMachineInstanceMigration{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+			},
+			Spec: v1.VirtualMachineInstanceMigrationSpec{
+				VMIName:   "missing",
+				Operation: pointer.P(v1.MigrationTarget),
+			},
+		}
+		virtClient := kubevirtfake.NewSimpleClientset()
+		migrationCreateAdmitter := admitters.NewMigrationCreateAdmitter(virtClient)
+		ar, err := newAdmissionReviewForVMIMCreation(migration)
+		Expect(err).ToNot(HaveOccurred())
+		resp := migrationCreateAdmitter.Admit(context.Background(), ar)
+		Expect(resp.Allowed).To(BeTrue())
 	})
 
 	Context("with no conflicting migration", func() {
@@ -113,9 +149,9 @@ var _ = Describe("Validating MigrationCreate Admitter", func() {
 		It("should accept Migration spec on create when previous VMI migration completed", func() {
 			vmi := libvmi.New(libvmi.WithNamespace(k8sv1.NamespaceDefault))
 			vmi.Status.MigrationState = &v1.VirtualMachineInstanceMigrationState{
-				MigrationUID: "123",
-				Completed:    true,
-				Failed:       false,
+				TargetMigrationUID: "123",
+				Completed:          true,
+				Failed:             false,
 			}
 
 			migration := &v1.VirtualMachineInstanceMigration{

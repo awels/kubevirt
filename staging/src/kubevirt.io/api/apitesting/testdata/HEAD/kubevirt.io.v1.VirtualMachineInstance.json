@@ -922,6 +922,8 @@
       "targetNodeDomainReadyTimestamp": "1970-01-01T01:01:01Z",
       "targetNodeDomainDetected": true,
       "targetNodeAddress": "targetNodeAddressValue",
+      "targetSyncAddress": "targetSyncAddressValue",
+      "remoteTargetNodeAddress": "remoteTargetNodeAddressValue",
       "targetDirectMigrationNodePorts": {
         "targetDirectMigrationNodePortsKey": -30
       },
@@ -935,7 +937,8 @@
       "abortRequested": true,
       "abortStatus": "abortStatusValue",
       "failureReason": "failureReasonValue",
-      "migrationUid": "migrationUidValue",
+      "sourceMigrationUid": "sourceMigrationUidValue",
+      "targetMigrationUid": "targetMigrationUidValue",
       "mode": "modeValue",
       "migrationPolicyName": "migrationPolicyNameValue",
       "migrationConfiguration": {

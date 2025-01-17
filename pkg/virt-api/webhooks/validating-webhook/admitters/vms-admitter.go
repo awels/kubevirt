@@ -50,7 +50,7 @@ import (
 	"kubevirt.io/kubevirt/pkg/virt-config/featuregate"
 )
 
-var validRunStrategies = []v1.VirtualMachineRunStrategy{v1.RunStrategyHalted, v1.RunStrategyManual, v1.RunStrategyAlways, v1.RunStrategyRerunOnFailure, v1.RunStrategyOnce}
+var validRunStrategies = []v1.VirtualMachineRunStrategy{v1.RunStrategyHalted, v1.RunStrategyManual, v1.RunStrategyAlways, v1.RunStrategyRerunOnFailure, v1.RunStrategyOnce, v1.RunStrategyWaitAsReceiver}
 
 type instancetypeVMsAdmitter interface {
 	ApplyToVM(vm *v1.VirtualMachine) (

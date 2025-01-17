@@ -3152,8 +3152,9 @@ func verifyVMIsUpdated(vmis []*v1.VirtualMachineInstance) {
 					endTime = foundVMI.Status.MigrationState.EndTimestamp.Time
 				}
 
-				return fmt.Sprintf("waiting for migration %s to complete for vmi %s/%s. Source Node [%s], Target Node [%s], Start Time [%s], End Time [%s], Now [%s], Failed: %t",
-					string(foundVMI.Status.MigrationState.MigrationUID),
+				return fmt.Sprintf("waiting for migration source %s, target %s to complete for vmi %s/%s. Source Node [%s], Target Node [%s], Start Time [%s], End Time [%s], Now [%s], Failed: %t",
+					string(foundVMI.Status.MigrationState.SourceMigrationUID),
+					string(foundVMI.Status.MigrationState.TargetMigrationUID),
 					foundVMI.Namespace,
 					foundVMI.Name,
 					foundVMI.Status.MigrationState.SourceNode,

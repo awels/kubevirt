@@ -1500,7 +1500,7 @@ var _ = Describe("Manager", func() {
 
 			vmi := newVMI(testNamespace, testVmName)
 			vmi.Status.MigrationState = &v1.VirtualMachineInstanceMigrationState{
-				MigrationUID: "111222333",
+				TargetMigrationUID: "111222333",
 			}
 
 			manager := &LibvirtDomainManager{
@@ -1537,7 +1537,7 @@ var _ = Describe("Manager", func() {
 			}
 			vmi := newVMI(testNamespace, testVmName)
 			vmi.Status.MigrationState = &v1.VirtualMachineInstanceMigrationState{
-				MigrationUID: "111222333",
+				TargetMigrationUID: "111222333",
 			}
 
 			manager := &LibvirtDomainManager{
@@ -1584,7 +1584,7 @@ var _ = Describe("Manager", func() {
 			}
 			vmi := newVMI(testNamespace, testVmName)
 			vmi.Status.MigrationState = &v1.VirtualMachineInstanceMigrationState{
-				MigrationUID: "111222333",
+				TargetMigrationUID: "111222333",
 			}
 
 			manager := &LibvirtDomainManager{
@@ -1634,7 +1634,7 @@ var _ = Describe("Manager", func() {
 			}
 			vmi := newVMI(testNamespace, testVmName)
 			vmi.Status.MigrationState = &v1.VirtualMachineInstanceMigrationState{
-				MigrationUID: "111222333",
+				TargetMigrationUID: "111222333",
 			}
 
 			manager := &LibvirtDomainManager{
@@ -1697,7 +1697,7 @@ var _ = Describe("Manager", func() {
 			}
 			vmi := newVMI(testNamespace, testVmName)
 			vmi.Status.MigrationState = &v1.VirtualMachineInstanceMigrationState{
-				MigrationUID: "111222333",
+				TargetMigrationUID: "111222333",
 			}
 
 			manager := &LibvirtDomainManager{
@@ -1741,7 +1741,7 @@ var _ = Describe("Manager", func() {
 			}
 			vmi := newVMI(testNamespace, testVmName)
 			vmi.Status.MigrationState = &v1.VirtualMachineInstanceMigrationState{
-				MigrationUID: "111222333",
+				TargetMigrationUID: "111222333",
 			}
 
 			manager := &LibvirtDomainManager{
@@ -1771,8 +1771,8 @@ var _ = Describe("Manager", func() {
 			now := metav1.Now()
 			vmi := newVMI(testNamespace, testVmName)
 			vmi.Status.MigrationState = &v1.VirtualMachineInstanceMigrationState{
-				MigrationUID:   migrationUid,
-				StartTimestamp: &now,
+				TargetMigrationUID: migrationUid,
+				StartTimestamp:     &now,
 			}
 
 			mockConn.EXPECT().LookupDomainByName(testDomainName).DoAndReturn(mockDomainWithFreeExpectation)
@@ -1811,12 +1811,12 @@ var _ = Describe("Manager", func() {
 			secondBefore := metav1.Time{Time: now.Add(-time.Second)}
 			vmi := newVMI(testNamespace, testVmName)
 			vmi.Status.MigrationState = &v1.VirtualMachineInstanceMigrationState{
-				MigrationUID:   "111222333",
-				StartTimestamp: &now,
+				TargetMigrationUID: "111222333",
+				StartTimestamp:     &now,
 			}
 
 			migrationMetadata, _ := metadataCache.Migration.Load()
-			migrationMetadata.UID = vmi.Status.MigrationState.MigrationUID
+			migrationMetadata.UID = vmi.Status.MigrationState.TargetMigrationUID
 			migrationMetadata.AbortStatus = string(v1.MigrationAbortInProgress)
 			migrationMetadata.StartTimestamp = &secondBefore
 			metadataCache.Migration.Store(migrationMetadata)
@@ -1850,11 +1850,11 @@ var _ = Describe("Manager", func() {
 			}
 			vmi := newVMI(testNamespace, testVmName)
 			vmi.Status.MigrationState = &v1.VirtualMachineInstanceMigrationState{
-				MigrationUID: "111222333",
+				TargetMigrationUID: "111222333",
 			}
 
 			migrationMetadata, _ := metadataCache.Migration.Load()
-			migrationMetadata.UID = vmi.Status.MigrationState.MigrationUID
+			migrationMetadata.UID = vmi.Status.MigrationState.TargetMigrationUID
 			migrationMetadata.AbortStatus = string(v1.MigrationAbortInProgress)
 			metadataCache.Migration.Store(migrationMetadata)
 
@@ -1902,11 +1902,11 @@ var _ = Describe("Manager", func() {
 			}
 			vmi := newVMI(testNamespace, testVmName)
 			vmi.Status.MigrationState = &v1.VirtualMachineInstanceMigrationState{
-				MigrationUID: "111222333",
+				TargetMigrationUID: "111222333",
 			}
 
 			migrationMetadata, _ := metadataCache.Migration.Load()
-			migrationMetadata.UID = vmi.Status.MigrationState.MigrationUID
+			migrationMetadata.UID = vmi.Status.MigrationState.TargetMigrationUID
 			metadataCache.Migration.Store(migrationMetadata)
 
 			manager := &LibvirtDomainManager{
@@ -1944,8 +1944,8 @@ var _ = Describe("Manager", func() {
 		It("should prepare the target pod", func() {
 			vmi := newVMI(testNamespace, testVmName)
 			vmi.Status.MigrationState = &v1.VirtualMachineInstanceMigrationState{
-				MigrationUID: "111222333",
-				TargetPod:    "fakepod",
+				TargetMigrationUID: "111222333",
+				TargetPod:          "fakepod",
 			}
 
 			manager, _ := NewLibvirtDomainManager(mockConn, testVirtShareDir, testEphemeralDiskDir, nil, "/usr/share/OVMF", ephemeralDiskCreatorMock, metadataCache, nil)
@@ -1962,7 +1962,7 @@ var _ = Describe("Manager", func() {
 
 			vmi := newVMI(testNamespace, testVmName)
 			vmi.Status.MigrationState = &v1.VirtualMachineInstanceMigrationState{
-				MigrationUID: "111222333",
+				TargetMigrationUID: "111222333",
 			}
 
 			userData := "fake\nuser\ndata\n"
@@ -1999,11 +1999,11 @@ var _ = Describe("Manager", func() {
 		It("should detect inprogress migration job", func() {
 			vmi := newVMI(testNamespace, testVmName)
 			vmi.Status.MigrationState = &v1.VirtualMachineInstanceMigrationState{
-				MigrationUID: "111222333",
+				TargetMigrationUID: "111222333",
 			}
 
 			startupMigrationMetadata, _ := metadataCache.Migration.Load()
-			startupMigrationMetadata.UID = vmi.Status.MigrationState.MigrationUID
+			startupMigrationMetadata.UID = vmi.Status.MigrationState.TargetMigrationUID
 			t := metav1.Now()
 			startupMigrationMetadata.StartTimestamp = &t
 			metadataCache.Migration.Store(startupMigrationMetadata)

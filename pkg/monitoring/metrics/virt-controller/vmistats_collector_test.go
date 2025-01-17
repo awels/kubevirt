@@ -437,8 +437,8 @@ var _ = Describe("VMI Stats Collector", func() {
 					Status: k6tv1.VirtualMachineInstanceStatus{
 						NodeName: "testNode",
 						MigrationState: &k6tv1.VirtualMachineInstanceMigrationState{
-							MigrationUID:   "test-migration-uid",
-							StartTimestamp: &now,
+							TargetMigrationUID: "test-migration-uid",
+							StartTimestamp:     &now,
 						},
 					},
 				}
@@ -460,11 +460,11 @@ var _ = Describe("VMI Stats Collector", func() {
 					Status: k6tv1.VirtualMachineInstanceStatus{
 						NodeName: "testNode",
 						MigrationState: &k6tv1.VirtualMachineInstanceMigrationState{
-							MigrationUID:   "test-migration-uid",
-							StartTimestamp: &now,
-							EndTimestamp:   &now,
-							Completed:      true,
-							Failed:         false,
+							TargetMigrationUID: "test-migration-uid",
+							StartTimestamp:     &now,
+							EndTimestamp:       &now,
+							Completed:          true,
+							Failed:             false,
 						},
 					},
 				}

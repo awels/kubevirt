@@ -220,6 +220,8 @@ func (VirtualMachineInstanceMigrationState) SwaggerDoc() map[string]string {
 		"targetNodeDomainReadyTimestamp": "The timestamp at which the target node detects the domain is active",
 		"targetNodeDomainDetected":       "The Target Node has seen the Domain Start Event",
 		"targetNodeAddress":              "The address of the target node to use for the migration",
+		"targetSyncAddress":              "The url to use to synchronize the VMI with the target",
+		"remoteTargetNodeAddress":        "The address of the remote target node to use for the migration",
 		"targetDirectMigrationNodePorts": "The list of ports opened for live migration on the destination node",
 		"targetNode":                     "The target node that the VMI is moving to",
 		"targetPod":                      "The target pod that the VMI is moving to",
@@ -230,7 +232,8 @@ func (VirtualMachineInstanceMigrationState) SwaggerDoc() map[string]string {
 		"abortRequested":                 "Indicates that the migration has been requested to abort",
 		"abortStatus":                    "Indicates the final status of the live migration abortion",
 		"failureReason":                  "Contains the reason why the migration failed",
-		"migrationUid":                   "The VirtualMachineInstanceMigration object associated with this migration",
+		"sourceMigrationUid":             "The source VirtualMachineInstanceMigration object associated with this migration",
+		"targetMigrationUid":             "The target VirtualMachineInstanceMigration object associated with this migration",
 		"mode":                           "Lets us know if the vmi is currently running pre or post copy migration",
 		"migrationPolicyName":            "Name of the migration policy. If string is empty, no policy is matched",
 		"migrationConfiguration":         "Migration configurations to apply",
@@ -317,7 +320,9 @@ func (VirtualMachineInstanceMigrationList) SwaggerDoc() map[string]string {
 
 func (VirtualMachineInstanceMigrationSpec) SwaggerDoc() map[string]string {
 	return map[string]string{
-		"vmiName": "The name of the VMI to perform the migration on. VMI must exist in the migration objects namespace",
+		"vmiName":    "The name of the VMI to perform the migration on. VMI must exist in the migration objects namespace",
+		"operation":  "The type of operation, either source or target. Target will create a new VMI (if not existing already)\nand create a receiving virt-launcher pod. Source will connect to the connect URL to start the migration\nif the target is ready",
+		"connectURL": "Required if operation is source, this is the url the virt-handler will connect to to perform the migration",
 	}
 }
 
@@ -334,6 +339,7 @@ func (VirtualMachineInstanceMigrationStatus) SwaggerDoc() map[string]string {
 		"":                          "VirtualMachineInstanceMigration reprents information pertaining to a VMI's migration.",
 		"phaseTransitionTimestamps": "PhaseTransitionTimestamp is the timestamp of when the last phase change occurred\n+listType=atomic\n+optional",
 		"migrationState":            "Represents the status of a live migration",
+		"syncEndpoint":              "SyncEndpoint is the URL that the source will use to synchronize the VMI with the target",
 	}
 }
 

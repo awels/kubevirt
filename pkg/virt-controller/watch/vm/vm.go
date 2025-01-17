@@ -86,6 +86,7 @@ type CloneAuthFunc func(dv *cdiv1.DataVolume, requestNamespace, requestName stri
 const (
 	stoppingVmMsg                             = "Stopping VM"
 	startingVmMsg                             = "Starting VM"
+	creatingTargetPod                         = "Creating target migration pod"
 	failedExtractVmkeyFromVmErrMsg            = "Failed to extract vmKey from VirtualMachine."
 	failedCreateCRforVmErrMsg                 = "Failed to create controller revision for VirtualMachine."
 	failedProcessDeleteNotificationErrMsg     = "Failed to process delete notification"
@@ -961,7 +962,7 @@ func (c *Controller) syncRunStrategy(vm *virtv1.VirtualMachine, vmi *virtv1.Virt
 		}
 
 		log.Log.Object(vm).Infof("%s due to runStrategy: %s", startingVmMsg, runStrategy)
-		vm, err = c.startVMI(vm)
+		vm, err = c.StartVMI(vm)
 		if err != nil {
 			return vm, common.NewSyncError(fmt.Errorf(startingVMIFailureFmt, err), failedCreateReason)
 		}
@@ -1010,7 +1011,7 @@ func (c *Controller) syncRunStrategy(vm *virtv1.VirtualMachine, vmi *virtv1.Virt
 		}
 
 		log.Log.Object(vm).Infof("%s due to runStrategy: %s", startingVmMsg, runStrategy)
-		vm, err = c.startVMI(vm)
+		vm, err = c.StartVMI(vm)
 		if err != nil {
 			return vm, common.NewSyncError(fmt.Errorf(startingVMIFailureFmt, err), failedCreateReason)
 		}
@@ -1035,7 +1036,7 @@ func (c *Controller) syncRunStrategy(vm *virtv1.VirtualMachine, vmi *virtv1.Virt
 			if hasStartRequest(vm) {
 				log.Log.Object(vm).Infof("%s due to start request and runStrategy: %s", startingVmMsg, runStrategy)
 
-				vm, err = c.startVMI(vm)
+				vm, err = c.StartVMI(vm)
 				if err != nil {
 					return vm, common.NewSyncError(fmt.Errorf(startingVMIFailureFmt, err), failedCreateReason)
 				}
@@ -1068,11 +1069,11 @@ func (c *Controller) syncRunStrategy(vm *virtv1.VirtualMachine, vmi *virtv1.Virt
 			return vm, common.NewSyncError(fmt.Errorf(failureDeletingVmiErrFormat, err), vmiFailedDeleteReason)
 		}
 		return vm, nil
-	case virtv1.RunStrategyOnce:
+	case virtv1.RunStrategyOnce, virtv1.RunStrategyWaitAsReceiver:
 		if vmi == nil {
 			log.Log.Object(vm).Infof("%s due to start request and runStrategy: %s", startingVmMsg, runStrategy)
 
-			vm, err = c.startVMI(vm)
+			vm, err = c.StartVMI(vm)
 			if err != nil {
 				return vm, common.NewSyncError(fmt.Errorf(startingVMIFailureFmt, err), failedCreateReason)
 			}
@@ -1161,7 +1162,7 @@ func (c *Controller) cleanupRestartRequired(vm *virtv1.VirtualMachine) (*virtv1.
 	return vm, c.deleteVMRevisions(vm)
 }
 
-func (c *Controller) startVMI(vm *virtv1.VirtualMachine) (*virtv1.VirtualMachine, error) {
+func (c *Controller) StartVMI(vm *virtv1.VirtualMachine) (*virtv1.VirtualMachine, error) {
 	ready, err := c.handleDataVolumes(vm)
 	if err != nil {
 		return vm, err
@@ -1201,6 +1202,9 @@ func (c *Controller) startVMI(vm *virtv1.VirtualMachine) (*virtv1.VirtualMachine
 
 	setGenerationAnnotationOnVmi(vm.Generation, vmi)
 
+	if vm.Spec.RunStrategy == nil || *vm.Spec.RunStrategy == virtv1.RunStrategyWaitAsReceiver {
+		vmi.Annotations[virtv1.CreateMigrationTarget] = "true"
+	}
 	// add a finalizer to ensure the VM controller has a chance to see
 	// the VMI before it is deleted
 	vmi.Finalizers = append(vmi.Finalizers, virtv1.VirtualMachineControllerFinalizer)
@@ -1358,25 +1362,26 @@ func (c *Controller) conditionallyBumpGenerationAnnotationOnVmi(vm *virtv1.Virtu
 		return vmi, nil
 	}
 
-	currentRevision, err := c.getControllerRevision(vmi.Namespace, vmi.Status.VirtualMachineRevisionName)
-	if currentRevision == nil || err != nil {
-		return vmi, err
-	}
-
-	revisionSpec := &VirtualMachineRevisionData{}
-	if err = json.Unmarshal(currentRevision.Data.Raw, revisionSpec); err != nil {
-		return vmi, err
-	}
-
-	// If the templates are the same, we can safely bump the annotation.
-	if equality.Semantic.DeepEqual(revisionSpec.Spec.Template, vm.Spec.Template) {
-		patchedVMI, err := c.patchVmGenerationAnnotationOnVmi(vm.Generation, vmi)
-		if err != nil {
+	if vmi.Status.VirtualMachineRevisionName != "" {
+		currentRevision, err := c.getControllerRevision(vmi.Namespace, vmi.Status.VirtualMachineRevisionName)
+		if currentRevision == nil || err != nil {
 			return vmi, err
 		}
-		vmi = patchedVMI
-	}
 
+		revisionSpec := &VirtualMachineRevisionData{}
+		if err = json.Unmarshal(currentRevision.Data.Raw, revisionSpec); err != nil {
+			return vmi, err
+		}
+
+		// If the templates are the same, we can safely bump the annotation.
+		if equality.Semantic.DeepEqual(revisionSpec.Spec.Template, vm.Spec.Template) {
+			patchedVMI, err := c.patchVmGenerationAnnotationOnVmi(vm.Generation, vmi)
+			if err != nil {
+				return vmi, err
+			}
+			vmi = patchedVMI
+		}
+	}
 	return vmi, nil
 }
 
@@ -2962,6 +2967,7 @@ func (c *Controller) sync(vm *virtv1.VirtualMachine, vmi *virtv1.VirtualMachineI
 	if vmi != nil {
 		startVMSpec, err = c.getLastVMRevisionSpec(vm)
 		if err != nil {
+			log.Log.Object(vm).Errorf("unable to get last VMRevision spec: %v", err)
 			return vm, vmi, nil, err
 		}
 	}
@@ -2983,6 +2989,7 @@ func (c *Controller) sync(vm *virtv1.VirtualMachine, vmi *virtv1.VirtualMachineI
 	} else {
 		vm, err = c.addVMFinalizer(vm)
 		if err != nil {
+			log.Log.Object(vm).Errorf("unable to add finalizer to VM: %v", err)
 			return vm, vmi, nil, err
 		}
 	}

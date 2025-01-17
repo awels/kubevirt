@@ -709,6 +709,7 @@ func (l *LibvirtDomainManager) generateCloudInitEmptyISO(vmi *v1.VirtualMachineI
 	if l.cloudInitDataStore == nil {
 		return nil
 	}
+	log.Log.Infof("Generating empty cloud-init ISO, volumes %v", vmi.Status.VolumeStatus)
 	for _, vs := range vmi.Status.VolumeStatus {
 		if vs.Name == l.cloudInitDataStore.VolumeName {
 			return l.generateSomeCloudInitISO(vmi, domPtr, vs.Size)

@@ -6112,7 +6112,7 @@ var _ = Describe("VirtualMachine", func() {
 					Type:   v1.VirtualMachineManualRecoveryRequired,
 					Status: k8sv1.ConditionTrue,
 				}))))
-				vmCopy, err := controller.startVMI(vm)
+				vmCopy, err := controller.StartVMI(vm)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(vm).To(Equal(vmCopy))
 				vmiList, err := virtFakeClient.KubevirtV1().VirtualMachineInstances(metav1.NamespaceDefault).List(context.TODO(), metav1.ListOptions{})

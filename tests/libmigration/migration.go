@@ -108,7 +108,8 @@ func ConfirmMigrationDataIsStored(virtClient kubecli.KubevirtClient, migration *
 	Expect(vmi.Status.MigrationState.EndTimestamp).To(Equal(migration.Status.MigrationState.EndTimestamp), "the VMI and the migration `Status::MigrationState::EndTimestamp` should be equal")
 	Expect(vmi.Status.MigrationState.Completed).To(Equal(migration.Status.MigrationState.Completed), "the VMI and migration completed state should be equal")
 	Expect(vmi.Status.MigrationState.Failed).To(Equal(migration.Status.MigrationState.Failed), "the VMI nad migration failed status must be equal")
-	Expect(vmi.Status.MigrationState.MigrationUID).To(Equal(migration.Status.MigrationState.MigrationUID), "the VMI migration UID and the migration object UID should match")
+	Expect(vmi.Status.MigrationState.SourceMigrationUID).To(Equal(migration.Status.MigrationState.SourceMigrationUID), "the source VMI migration UID and the migration object UID should match")
+	Expect(vmi.Status.MigrationState.TargetMigrationUID).To(Equal(migration.Status.MigrationState.TargetMigrationUID), "the target VMI migration UID and the migration object UID should match")
 	return
 }
 
@@ -127,7 +128,7 @@ func ConfirmVMIPostMigration(virtClient kubecli.KubevirtClient, vmi *v1.VirtualM
 	Expect(vmi.Status.MigrationState.Completed).To(BeTrue(), "the VMI migration state must have completed")
 	Expect(vmi.Status.MigrationState.Failed).To(BeFalse(), "the VMI migration status must not have failed")
 	Expect(vmi.Status.MigrationState.TargetNodeAddress).NotTo(Equal(""), "the VMI `Status::MigrationState::TargetNodeAddress` must not be empty")
-	Expect(string(vmi.Status.MigrationState.MigrationUID)).To(Equal(string(migration.UID)), "the VMI migration UID must be the expected one")
+	Expect(string(vmi.Status.MigrationState.TargetMigrationUID)).To(Equal(string(migration.UID)), "the VMI migration UID must be the expected one")
 
 	By("Verifying the VMI's is in the running state")
 	Expect(vmi.Status.Phase).To(Equal(v1.Running), "the VMI must be in `Running` state after the migration")
@@ -366,7 +367,7 @@ func ConfirmVMIPostMigrationFailed(vmi *v1.VirtualMachineInstance, migrationUID 
 	Expect(vmi.Status.MigrationState.Completed).To(BeTrue())
 	Expect(vmi.Status.MigrationState.Failed).To(BeTrue())
 	Expect(vmi.Status.MigrationState.TargetNodeAddress).ToNot(Equal(""))
-	Expect(string(vmi.Status.MigrationState.MigrationUID)).To(Equal(migrationUID))
+	Expect(string(vmi.Status.MigrationState.TargetMigrationUID)).To(Equal(migrationUID))
 
 	By("Verifying the VMI's is in the running state")
 	Expect(vmi.Status.Phase).To(Equal(v1.Running))
@@ -404,7 +405,7 @@ func ConfirmVMIPostMigrationAborted(vmi *v1.VirtualMachineInstance, migrationUID
 	ExpectWithOffset(1, vmi.Status.MigrationState.SourceNode).To(Equal(vmi.Status.NodeName))
 	ExpectWithOffset(1, vmi.Status.MigrationState.TargetNode).ToNot(Equal(vmi.Status.MigrationState.SourceNode))
 	ExpectWithOffset(1, vmi.Status.MigrationState.TargetNodeAddress).ToNot(Equal(""))
-	ExpectWithOffset(1, string(vmi.Status.MigrationState.MigrationUID)).To(Equal(migrationUID))
+	ExpectWithOffset(1, string(vmi.Status.MigrationState.TargetMigrationUID)).To(Equal(migrationUID))
 	ExpectWithOffset(1, vmi.Status.MigrationState.Failed).To(BeTrue())
 	ExpectWithOffset(1, vmi.Status.MigrationState.AbortRequested).To(BeTrue())
 

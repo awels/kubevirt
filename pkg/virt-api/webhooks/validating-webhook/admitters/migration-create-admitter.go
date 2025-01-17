@@ -58,7 +58,7 @@ func isMigratable(vmi *v1.VirtualMachineInstance) error {
 	return nil
 }
 
-func ensureNoMigrationConflict(ctx context.Context, virtClient kubevirt.Interface, vmiName string, namespace string) error {
+func ensureNoMigrationConflict(ctx context.Context, virtClient kubevirt.Interface, vmiName string, namespace string, operation *v1.VirtualMachineInstanceMigrationOperation) error {
 	labelSelector, err := labels.Parse(fmt.Sprintf("%s in (%s)", v1.MigrationSelectorLabel, vmiName))
 	if err != nil {
 		return err
@@ -72,6 +72,10 @@ func ensureNoMigrationConflict(ctx context.Context, virtClient kubevirt.Interfac
 	if len(list.Items) > 0 {
 		for _, mig := range list.Items {
 			if mig.Status.Phase == v1.MigrationSucceeded || mig.Status.Phase == v1.MigrationFailed {
+				continue
+			}
+			// Allow migration source and target to be in flight at the same time
+			if mig.Spec.Operation != nil && *mig.Spec.Operation == v1.MigrationTarget && operation != nil && *operation == v1.MigrationSource {
 				continue
 			}
 			return fmt.Errorf("in-flight migration detected. Active migration job (%s) is currently already in progress for VMI %s.", string(mig.UID), mig.Spec.VMIName)
@@ -97,11 +101,21 @@ func (admitter *MigrationCreateAdmitter) Admit(ctx context.Context, ar *admissio
 	}
 
 	vmi, err := admitter.virtClient.KubevirtV1().VirtualMachineInstances(migration.Namespace).Get(ctx, migration.Spec.VMIName, metav1.GetOptions{})
-	if errors.IsNotFound(err) {
+	if errors.IsNotFound(err) && migration.Spec.Operation == nil {
 		// ensure VMI exists for the migration
 		return webhookutils.ToAdmissionResponseError(fmt.Errorf("the VMI \"%s/%s\" does not exist", migration.Namespace, migration.Spec.VMIName))
-	} else if err != nil {
+	} else if errors.IsNotFound(err) && *migration.Spec.Operation != v1.MigrationTarget {
+		if *migration.Spec.Operation == v1.MigrationSource {
+			return webhookutils.ToAdmissionResponseError(fmt.Errorf("the VMI \"%s/%s\" does not exist, and source operation specified", migration.Namespace, migration.Spec.VMIName))
+		} else {
+			return webhookutils.ToAdmissionResponseError(fmt.Errorf("migration operation set, but invalid %s", string(*migration.Spec.Operation)))
+		}
+	} else if err != nil && !errors.IsNotFound(err) {
 		return webhookutils.ToAdmissionResponseError(err)
+	}
+
+	if migration.Spec.Operation != nil && *migration.Spec.Operation == v1.MigrationSource && (migration.Spec.ConnectURL == nil || *migration.Spec.ConnectURL == "") {
+		return webhookutils.ToAdmissionResponseError(fmt.Errorf("connectURL is required for source migration"))
 	}
 
 	// Don't allow introducing a migration job for a VMI that has already finalized
@@ -117,7 +131,7 @@ func (admitter *MigrationCreateAdmitter) Admit(ctx context.Context, ar *admissio
 
 	// Don't allow new migration jobs to be introduced when previous migration jobs
 	// are already in flight.
-	err = ensureNoMigrationConflict(ctx, admitter.virtClient, migration.Spec.VMIName, migration.Namespace)
+	err = ensureNoMigrationConflict(ctx, admitter.virtClient, migration.Spec.VMIName, migration.Namespace, migration.Spec.Operation)
 	if err != nil {
 		return webhookutils.ToAdmissionResponseError(err)
 	}

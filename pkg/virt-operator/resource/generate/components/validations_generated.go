@@ -13697,13 +13697,16 @@ var CRDsValidation map[string]string = map[string]string{
               description: Name of the migration policy. If string is empty, no policy
                 is matched
               type: string
-            migrationUid:
-              description: The VirtualMachineInstanceMigration object associated with
-                this migration
-              type: string
             mode:
               description: Lets us know if the vmi is currently running pre or post
                 copy migration
+              type: string
+            remoteTargetNodeAddress:
+              description: The address of the remote target node to use for the migration
+              type: string
+            sourceMigrationUid:
+              description: The source VirtualMachineInstanceMigration object associated
+                with this migration
               type: string
             sourceNode:
               description: The source node that the VMI originated on
@@ -13736,6 +13739,10 @@ var CRDsValidation map[string]string = map[string]string{
               description: The list of ports opened for live migration on the destination
                 node
               type: object
+            targetMigrationUid:
+              description: The target VirtualMachineInstanceMigration object associated
+                with this migration
+              type: string
             targetNode:
               description: The target node that the VMI is moving to
               type: string
@@ -13761,6 +13768,9 @@ var CRDsValidation map[string]string = map[string]string{
               type: string
             targetPod:
               description: The target pod that the VMI is moving to
+              type: string
+            targetSyncAddress:
+              description: The url to use to synchronize the VMI with the target
               type: string
           type: object
         migrationTransport:
@@ -13981,6 +13991,16 @@ var CRDsValidation map[string]string = map[string]string{
       type: object
     spec:
       properties:
+        connectURL:
+          description: Required if operation is source, this is the url the virt-handler
+            will connect to to perform the migration
+          type: string
+        operation:
+          description: |-
+            The type of operation, either source or target. Target will create a new VMI (if not existing already)
+            and create a receiving virt-launcher pod. Source will connect to the connect URL to start the migration
+            if the target is ready
+          type: string
         vmiName:
           description: The name of the VMI to perform the migration on. VMI must exist
             in the migration objects namespace
@@ -14126,13 +14146,16 @@ var CRDsValidation map[string]string = map[string]string{
               description: Name of the migration policy. If string is empty, no policy
                 is matched
               type: string
-            migrationUid:
-              description: The VirtualMachineInstanceMigration object associated with
-                this migration
-              type: string
             mode:
               description: Lets us know if the vmi is currently running pre or post
                 copy migration
+              type: string
+            remoteTargetNodeAddress:
+              description: The address of the remote target node to use for the migration
+              type: string
+            sourceMigrationUid:
+              description: The source VirtualMachineInstanceMigration object associated
+                with this migration
               type: string
             sourceNode:
               description: The source node that the VMI originated on
@@ -14165,6 +14188,10 @@ var CRDsValidation map[string]string = map[string]string{
               description: The list of ports opened for live migration on the destination
                 node
               type: object
+            targetMigrationUid:
+              description: The target VirtualMachineInstanceMigration object associated
+                with this migration
+              type: string
             targetNode:
               description: The target node that the VMI is moving to
               type: string
@@ -14191,6 +14218,9 @@ var CRDsValidation map[string]string = map[string]string{
             targetPod:
               description: The target pod that the VMI is moving to
               type: string
+            targetSyncAddress:
+              description: The url to use to synchronize the VMI with the target
+              type: string
           type: object
         phase:
           description: VirtualMachineInstanceMigrationPhase is a label for the condition
@@ -14216,6 +14246,10 @@ var CRDsValidation map[string]string = map[string]string{
             type: object
           type: array
           x-kubernetes-list-type: atomic
+        syncEndpoint:
+          description: SyncEndpoint is the URL that the source will use to synchronize
+            the VMI with the target
+          type: string
       type: object
   required:
   - spec

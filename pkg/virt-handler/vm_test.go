@@ -1615,9 +1615,9 @@ var _ = Describe("VirtualMachineInstance", func() {
 			vmi.Status.NodeName = "othernode"
 			vmi.Labels[v1.MigrationTargetNodeNameLabel] = host
 			vmi.Status.MigrationState = &v1.VirtualMachineInstanceMigrationState{
-				TargetNode:   host,
-				SourceNode:   "othernode",
-				MigrationUID: "123",
+				TargetNode:         host,
+				SourceNode:         "othernode",
+				TargetMigrationUID: "123",
 			}
 			vmi = addActivePods(vmi, podTestUUID, host)
 
@@ -1638,7 +1638,7 @@ var _ = Describe("VirtualMachineInstance", func() {
 			err = controller.handleTargetMigrationProxy(vmi)
 			Expect(err).NotTo(HaveOccurred())
 
-			destSrcPorts := controller.migrationProxy.GetTargetListenerPorts(string(vmi.UID))
+			destSrcPorts := controller.migrationProxyManager.GetTargetListenerPorts(string(vmi.UID))
 			updatedVmi := vmi.DeepCopy()
 			updatedVmi.Status.MigrationState.TargetNodeAddress = controller.migrationIpAddress
 			updatedVmi.Status.MigrationState.TargetDirectMigrationNodePorts = destSrcPorts
@@ -1660,10 +1660,10 @@ var _ = Describe("VirtualMachineInstance", func() {
 			vmi.Status.NodeName = "othernode"
 			vmi.Labels[v1.MigrationTargetNodeNameLabel] = host
 			vmi.Status.MigrationState = &v1.VirtualMachineInstanceMigrationState{
-				TargetNode:   host,
-				SourceNode:   "othernode",
-				MigrationUID: "123",
-				Failed:       true,
+				TargetNode:         host,
+				SourceNode:         "othernode",
+				TargetMigrationUID: "123",
+				Failed:             true,
 			}
 			vmi = addActivePods(vmi, podTestUUID, host)
 
@@ -1686,9 +1686,9 @@ var _ = Describe("VirtualMachineInstance", func() {
 			vmi.Status.NodeName = "othernode"
 			vmi.Labels[v1.MigrationTargetNodeNameLabel] = host
 			vmi.Status.MigrationState = &v1.VirtualMachineInstanceMigrationState{
-				TargetNode:   host,
-				SourceNode:   "othernode",
-				MigrationUID: "123",
+				TargetNode:         host,
+				SourceNode:         "othernode",
+				TargetMigrationUID: "123",
 			}
 			now := metav1.Time{Time: time.Now()}
 			vmi.DeletionTimestamp = &now
@@ -1711,7 +1711,7 @@ var _ = Describe("VirtualMachineInstance", func() {
 			err = controller.handleTargetMigrationProxy(vmi)
 			Expect(err).NotTo(HaveOccurred())
 
-			destSrcPorts := controller.migrationProxy.GetTargetListenerPorts(string(vmi.UID))
+			destSrcPorts := controller.migrationProxyManager.GetTargetListenerPorts(string(vmi.UID))
 			updatedVmi := vmi.DeepCopy()
 			updatedVmi.Status.MigrationState.TargetNodeAddress = controller.migrationIpAddress
 			updatedVmi.Status.MigrationState.TargetDirectMigrationNodePorts = destSrcPorts
@@ -1731,9 +1731,9 @@ var _ = Describe("VirtualMachineInstance", func() {
 			vmi.Status.NodeName = "othernode"
 			vmi.Labels[v1.MigrationTargetNodeNameLabel] = host
 			vmi.Status.MigrationState = &v1.VirtualMachineInstanceMigrationState{
-				TargetNode:   host,
-				SourceNode:   "othernode",
-				MigrationUID: "123",
+				TargetNode:         host,
+				SourceNode:         "othernode",
+				TargetMigrationUID: "123",
 			}
 
 			stalePodUUID := uuid.NewUUID()
@@ -1774,19 +1774,27 @@ var _ = Describe("VirtualMachineInstance", func() {
 			vmi.ObjectMeta.ResourceVersion = "1"
 			vmi.Status.Phase = v1.Running
 			vmi.Labels = make(map[string]string)
+			vmi.Annotations = make(map[string]string)
 			vmi.Status.NodeName = host
 			vmi.Labels[v1.MigrationTargetNodeNameLabel] = "othernode"
+			vmi.Annotations[v1.CreateMigrationSource] = "true"
+			vmi.Annotations[v1.CreateMigrationTarget] = "true"
 			vmi.Status.Interfaces = make([]v1.VirtualMachineInstanceNetworkInterface, 0)
 			vmi.Status.MigrationState = &v1.VirtualMachineInstanceMigrationState{
 				TargetNode:                     "othernode",
 				TargetNodeAddress:              "127.0.0.1:12345",
 				SourceNode:                     host,
-				MigrationUID:                   "123",
+				TargetMigrationUID:             "123",
+				SourceMigrationUID:             "123",
 				TargetDirectMigrationNodePorts: map[string]int{"49152": 12132},
 			}
 			vmi.Status.Conditions = []v1.VirtualMachineInstanceCondition{
 				{
 					Type:   v1.VirtualMachineInstanceIsMigratable,
+					Status: k8sv1.ConditionTrue,
+				},
+				{
+					Type:   v1.VirtualMachineInstanceSyncProxyConnected,
 					Status: k8sv1.ConditionTrue,
 				},
 			}
@@ -1815,16 +1823,21 @@ var _ = Describe("VirtualMachineInstance", func() {
 			vmi.ObjectMeta.ResourceVersion = "1"
 			vmi.Status.Phase = v1.Running
 			vmi.Labels = make(map[string]string)
+			vmi.Annotations = make(map[string]string)
 			vmi.Status.NodeName = host
 			vmi.Labels[v1.MigrationTargetNodeNameLabel] = "othernode"
+			vmi.Annotations[v1.CreateMigrationSource] = "true"
+			vmi.Annotations[v1.CreateMigrationTarget] = "true"
 			vmi.Status.Interfaces = make([]v1.VirtualMachineInstanceNetworkInterface, 0)
 			startTimestamp := metav1.Now()
 			vmi.Status.MigrationState = &v1.VirtualMachineInstanceMigrationState{
 				TargetNode:                     "othernode",
 				TargetNodeAddress:              "127.0.0.1:12345",
 				SourceNode:                     host,
-				MigrationUID:                   "123",
-				TargetDirectMigrationNodePorts: map[string]int{"49152": 12132},
+				TargetMigrationUID:             "123",
+				SourceMigrationUID:             "123",
+				TargetDirectMigrationNodePorts: map[string]int{"49152": 12132, "49154": 12346},
+				TargetSyncAddress:              "127.0.0.1:12346",
 				StartTimestamp:                 &startTimestamp,
 			}
 			vmi.Status.Conditions = []v1.VirtualMachineInstanceCondition{
@@ -1852,14 +1865,18 @@ var _ = Describe("VirtualMachineInstance", func() {
 			vmi.ObjectMeta.ResourceVersion = "1"
 			vmi.Status.Phase = v1.Running
 			vmi.Labels = make(map[string]string)
+			vmi.Annotations = make(map[string]string)
 			vmi.Status.NodeName = host
 			vmi.Labels[v1.MigrationTargetNodeNameLabel] = "othernode"
+			vmi.Annotations[v1.CreateMigrationSource] = "true"
+			vmi.Annotations[v1.CreateMigrationTarget] = "true"
 			vmi.Status.MigrationState = &v1.VirtualMachineInstanceMigrationState{
 				AbortRequested:                 true,
 				TargetNode:                     "othernode",
 				TargetNodeAddress:              "127.0.0.1:12345",
 				SourceNode:                     host,
-				MigrationUID:                   "123",
+				TargetMigrationUID:             "123",
+				SourceMigrationUID:             "123",
 				TargetDirectMigrationNodePorts: map[string]int{"49152": 12132},
 			}
 			vmi.Status.Conditions = []v1.VirtualMachineInstanceCondition{
@@ -1892,15 +1909,19 @@ var _ = Describe("VirtualMachineInstance", func() {
 			vmi.ObjectMeta.ResourceVersion = "1"
 			vmi.Status.Phase = v1.Running
 			vmi.Labels = make(map[string]string)
+			vmi.Annotations = make(map[string]string)
 			vmi.Status.NodeName = host
 			vmi.Labels[v1.MigrationTargetNodeNameLabel] = "othernode"
+			vmi.Annotations[v1.CreateMigrationSource] = "true"
+			vmi.Annotations[v1.CreateMigrationTarget] = "true"
 			vmi.Status.Interfaces = make([]v1.VirtualMachineInstanceNetworkInterface, 0)
 			now := metav1.Time{Time: time.Unix(time.Now().UTC().Unix(), 0)}
 			vmi.Status.MigrationState = &v1.VirtualMachineInstanceMigrationState{
 				TargetNode:                     "othernode",
 				TargetNodeAddress:              "127.0.0.1:12345",
 				SourceNode:                     host,
-				MigrationUID:                   "123",
+				TargetMigrationUID:             "123",
+				SourceMigrationUID:             "123",
 				TargetNodeDomainDetected:       true,
 				TargetNodeDomainReadyTimestamp: &now,
 			}
@@ -1947,7 +1968,7 @@ var _ = Describe("VirtualMachineInstance", func() {
 				TargetNode:               host,
 				TargetNodeAddress:        "127.0.0.1:12345",
 				SourceNode:               "othernode",
-				MigrationUID:             "123",
+				TargetMigrationUID:       "123",
 				TargetNodeDomainDetected: false,
 				StartTimestamp:           &pastTime,
 			}
@@ -1989,7 +2010,7 @@ var _ = Describe("VirtualMachineInstance", func() {
 				TargetNode:               host,
 				TargetNodeAddress:        "127.0.0.1:12345",
 				SourceNode:               "othernode",
-				MigrationUID:             "123",
+				TargetMigrationUID:       "123",
 				TargetNodeDomainDetected: false,
 				StartTimestamp:           &pastTime,
 			}
@@ -2160,7 +2181,7 @@ var _ = Describe("VirtualMachineInstance", func() {
 			TargetNode:               host,
 			TargetNodeAddress:        "127.0.0.1:12345",
 			SourceNode:               "othernode",
-			MigrationUID:             "123",
+			TargetMigrationUID:       "123",
 			TargetNodeDomainDetected: false,
 			StartTimestamp:           &pastTime,
 		}
@@ -3327,11 +3348,15 @@ var _ = Describe("VirtualMachineInstance", func() {
 				vmi = api2.NewMinimalVMI("testvmi")
 				vmi.UID = vmiTestUUID
 				vmi.Status.Phase = v1.Running
+				vmi.Annotations = make(map[string]string)
+				vmi.Annotations[v1.CreateMigrationSource] = "true"
+				vmi.Annotations[v1.CreateMigrationTarget] = "true"
 				vmi.Status.MigrationState = &v1.VirtualMachineInstanceMigrationState{
 					TargetNode:                     "othernode",
 					TargetNodeAddress:              "127.0.0.1:12345",
 					SourceNode:                     host,
-					MigrationUID:                   "123",
+					TargetMigrationUID:             "123",
+					SourceMigrationUID:             "123",
 					TargetDirectMigrationNodePorts: map[string]int{"49152": 12132},
 				}
 				vmi.Status.Conditions = []v1.VirtualMachineInstanceCondition{

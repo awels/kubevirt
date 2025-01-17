@@ -673,8 +673,9 @@ status:
       progressTimeout: -15
       unsafeMigrationOverride: true
     migrationPolicyName: migrationPolicyNameValue
-    migrationUid: migrationUidValue
     mode: modeValue
+    remoteTargetNodeAddress: remoteTargetNodeAddressValue
+    sourceMigrationUid: sourceMigrationUidValue
     sourceNode: sourceNodeValue
     sourcePersistentStatePVCName: sourcePersistentStatePVCNameValue
     sourcePod: sourcePodValue
@@ -684,6 +685,7 @@ status:
     - -12
     targetDirectMigrationNodePorts:
       targetDirectMigrationNodePortsKey: -30
+    targetMigrationUid: targetMigrationUidValue
     targetNode: targetNodeValue
     targetNodeAddress: targetNodeAddressValue
     targetNodeDomainDetected: true
@@ -691,6 +693,7 @@ status:
     targetNodeTopology: targetNodeTopologyValue
     targetPersistentStatePVCName: targetPersistentStatePVCNameValue
     targetPod: targetPodValue
+    targetSyncAddress: targetSyncAddressValue
   migrationTransport: migrationTransportValue
   nodeName: nodeNameValue
   phase: phaseValue

@@ -24,6 +24,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -72,7 +73,7 @@ var _ = Describe("MigrationProxy", func() {
 
 				defer listener.Close()
 
-				sourceProxy := NewSourceProxy(sourceSock, "127.0.0.1:12345", tlsConfig, tlsConfig, "123")
+				sourceProxy := NewSourceSocketProxy(sourceSock, "127.0.0.1:12345", tlsConfig, tlsConfig, "123")
 				defer sourceProxy.Stop()
 
 				err = sourceProxy.Start()
@@ -114,8 +115,8 @@ var _ = Describe("MigrationProxy", func() {
 
 				defer virtqemudListener.Close()
 
-				targetProxy := NewTargetProxy("0.0.0.0", 12345, tlsConfig, tlsConfig, virtqemudSock, "123")
-				sourceProxy := NewSourceProxy(sourceSock, "127.0.0.1:12345", tlsConfig, tlsConfig, "123")
+				targetProxy := NewTargetSocketProxy("0.0.0.0", 12345, tlsConfig, tlsConfig, virtqemudSock, "123")
+				sourceProxy := NewSourceSocketProxy(sourceSock, "127.0.0.1:12345", tlsConfig, tlsConfig, "123")
 				defer targetProxy.Stop()
 				defer sourceProxy.Stop()
 
@@ -150,7 +151,9 @@ var _ = Describe("MigrationProxy", func() {
 			})
 
 			DescribeTable("by creating both ends with a manager and sending a message", func(migrationConfig *v1.MigrationConfiguration) {
-				directMigrationPort := "49152"
+				vmiInformer, _ := testutils.NewFakeInformerFor(&v1.VirtualMachineInstance{})
+
+				directMigrationPort := strconv.Itoa(LibvirtDirectMigrationPort)
 				virtqemudSock := filepath.Join(tmpDir, "virtqemud-sock")
 				virtqemudListener, err := net.Listen("unix", virtqemudSock)
 				Expect(err).ShouldNot(HaveOccurred())
@@ -163,7 +166,7 @@ var _ = Describe("MigrationProxy", func() {
 					MigrationConfiguration: migrationConfig,
 				})
 				manager := NewMigrationProxyManager(tlsConfig, tlsConfig, config)
-				manager.StartTargetListener("mykey", []string{virtqemudSock, directSock})
+				manager.StartTargetListener("mykey", []string{virtqemudSock, directSock}, nil, vmiInformer)
 				destSrcPortMap := manager.GetTargetListenerPorts("mykey")
 				manager.StartSourceListener("mykey", "127.0.0.1", destSrcPortMap, tmpDir)
 
@@ -213,7 +216,7 @@ var _ = Describe("MigrationProxy", func() {
 			)
 
 			DescribeTable("by ensuring no new listeners can be created after shutdown", func(migrationConfig *v1.MigrationConfiguration) {
-
+				vmiInformer, _ := testutils.NewFakeInformerFor(&v1.VirtualMachineInstance{})
 				key1 := "key1"
 				key2 := "key2"
 
@@ -231,7 +234,7 @@ var _ = Describe("MigrationProxy", func() {
 					MigrationConfiguration: migrationConfig,
 				})
 				manager := NewMigrationProxyManager(tlsConfig, tlsConfig, config)
-				err = manager.StartTargetListener(key1, []string{virtqemudSock, directSock})
+				err = manager.StartTargetListener(key1, []string{virtqemudSock, directSock}, nil, vmiInformer)
 				Expect(err).ShouldNot(HaveOccurred())
 				destSrcPortMap := manager.GetTargetListenerPorts(key1)
 				err = manager.StartSourceListener(key1, "127.0.0.1", destSrcPortMap, tmpDir)
@@ -245,7 +248,7 @@ var _ = Describe("MigrationProxy", func() {
 				count := manager.OpenListenerCount()
 				Expect(count).To(Equal(2))
 
-				err = manager.StartTargetListener(key2, []string{virtqemudSock, directSock})
+				err = manager.StartTargetListener(key2, []string{virtqemudSock, directSock}, nil, vmiInformer)
 				Expect(err).Should(HaveOccurred())
 				Expect(err.Error()).To(Equal("unable to process new migration connections during virt-handler shutdown"))
 

@@ -203,11 +203,13 @@ func NewController(
 		host:                             host,
 		migrationIpAddress:               migrationIpAddress,
 		virtShareDir:                     virtShareDir,
+		vmiSourceInformer:                vmiSourceInformer,
+		vmiTargetInformer:                vmiTargetInformer,
 		vmiSourceStore:                   vmiSourceInformer.GetStore(),
 		vmiTargetStore:                   vmiTargetInformer.GetStore(),
 		domainStore:                      domainInformer.GetStore(),
 		heartBeatInterval:                1 * time.Minute,
-		migrationProxy:                   migrationProxy,
+		migrationProxyManager:            migrationProxy,
 		podIsolationDetector:             podIsolationDetector,
 		containerDiskMounter:             container_disk.NewMounter(podIsolationDetector, containerDiskState, clusterConfig),
 		hotplugVolumeMounter:             hotplug_volume.NewVolumeMounter(hotplugState, kubeletPodsDir),
@@ -296,13 +298,15 @@ type VirtualMachineController struct {
 	virtShareDir             string
 	virtPrivateDir           string
 	queue                    workqueue.TypedRateLimitingInterface[string]
+	vmiSourceInformer        cache.SharedIndexInformer
+	vmiTargetInformer        cache.SharedIndexInformer
 	vmiSourceStore           cache.Store
 	vmiTargetStore           cache.Store
 	domainStore              cache.Store
 	launcherClients          virtcache.LauncherClientInfoByVMI
 	heartBeatInterval        time.Duration
 	deviceManagerController  *device_manager.DeviceController
-	migrationProxy           migrationproxy.ProxyManager
+	migrationProxyManager    migrationproxy.ProxyManager
 	podIsolationDetector     isolation.PodIsolationDetector
 	containerDiskMounter     container_disk.Mounter
 	hotplugVolumeMounter     hotplug_volume.VolumeMounter
@@ -609,7 +613,8 @@ func (c *VirtualMachineController) setMigrationProgressStatus(vmi *v1.VirtualMac
 	}
 
 	migrationMetadata := domain.Spec.Metadata.KubeVirt.Migration
-	if migrationMetadata.UID != vmi.Status.MigrationState.MigrationUID {
+	if migrationMetadata.UID != vmi.Status.MigrationState.SourceMigrationUID {
+		log.DefaultLogger().Info("Returning prematurely UID")
 		return
 	}
 
@@ -660,6 +665,8 @@ func (c *VirtualMachineController) migrationSourceUpdateVMIStatus(origVMI *v1.Vi
 	if vmi.Status.MigrationState != nil {
 		migrationHost = vmi.Status.MigrationState.TargetNode
 	}
+
+	log.Log.Infof("migrationHost: %s", migrationHost)
 
 	if vmi.Status.MigrationState != nil && vmi.Status.MigrationState.EndTimestamp == nil {
 		now := metav1.NewTime(time.Now())
@@ -777,7 +784,7 @@ func (c *VirtualMachineController) migrationTargetUpdateVMIStatus(vmi *v1.Virtua
 	}
 
 	if !migrations.IsMigrating(vmi) {
-		destSrcPortsMap := c.migrationProxy.GetTargetListenerPorts(string(vmi.UID))
+		destSrcPortsMap := c.migrationProxyManager.GetTargetListenerPorts(string(vmi.UID))
 		if len(destSrcPortsMap) == 0 {
 			msg := "target migration listener is not up for this vmi"
 			log.Log.Object(vmi).Error(msg)
@@ -787,19 +794,25 @@ func (c *VirtualMachineController) migrationTargetUpdateVMIStatus(vmi *v1.Virtua
 		hostAddress := ""
 		// advertise the listener address to the source node
 		if vmi.Status.MigrationState != nil {
-			hostAddress = vmi.Status.MigrationState.TargetNodeAddress
+			if vmi.Status.MigrationState.RemoteTargetNodeAddress != "" {
+				hostAddress = vmi.Status.MigrationState.RemoteTargetNodeAddress
+			} else {
+				hostAddress = vmi.Status.MigrationState.TargetNodeAddress
+			}
 		}
 		if hostAddress != c.migrationIpAddress {
 			portsList := make([]string, 0, len(destSrcPortsMap))
+			migrationAddress := c.migrationIpAddress
 
 			for k := range destSrcPortsMap {
 				portsList = append(portsList, k)
 			}
 			portsStrList := strings.Trim(strings.Join(strings.Fields(fmt.Sprint(portsList)), ","), "[]")
-			c.recorder.Event(vmi, k8sv1.EventTypeNormal, v1.PreparingTarget.String(), fmt.Sprintf("Migration Target is listening at %s, on ports: %s", c.migrationIpAddress, portsStrList))
-			vmiCopy.Status.MigrationState.TargetNodeAddress = c.migrationIpAddress
-			vmiCopy.Status.MigrationState.TargetDirectMigrationNodePorts = destSrcPortsMap
+			c.recorder.Event(vmi, k8sv1.EventTypeNormal, v1.PreparingTarget.String(), fmt.Sprintf("Migration Target is listening at %s, on ports: %s", migrationAddress, portsStrList))
+			vmiCopy.Status.MigrationState.TargetNodeAddress = migrationAddress
 		}
+		destSrcPortsMap[c.migrationProxyManager.GetSyncPort(string(vmi.UID))] = migrationproxy.VMISyncPort
+		vmiCopy.Status.MigrationState.TargetDirectMigrationNodePorts = destSrcPortsMap
 
 		// If the migrated VMI requires dedicated CPUs, report the new pod CPU set to the source node
 		// via the VMI migration status in order to patch the domain pre migration
@@ -1804,7 +1817,7 @@ func (c *VirtualMachineController) migrationTargetExecute(vmi *v1.VirtualMachine
 	// set true when the current migration target has exitted and needs to be cleaned up.
 	shouldCleanUp := false
 
-	if vmiExists && vmi.IsRunning() {
+	if vmiExists && (vmi.IsRunning() || vmi.IsMigrationTarget()) {
 		shouldUpdate = true
 	}
 
@@ -2064,7 +2077,7 @@ func (c *VirtualMachineController) defaultExecute(key string,
 	if syncErr != nil {
 		return syncErr
 	}
-
+	log.Log.Object(vmi).Info("Synchronization loop succeeded.")
 	log.Log.Object(vmi).V(3).Info("Synchronization loop succeeded.")
 	return nil
 
@@ -2132,13 +2145,14 @@ func (c *VirtualMachineController) execute(key string) error {
 	// Take different execution paths depending on the state of the migration and the
 	// node this is executed on.
 
-	if vmiExists && c.isPreMigrationTarget(vmi) {
+	if vmiExists && (c.isPreMigrationTarget(vmi)) {
 		// 1. PRE-MIGRATION TARGET PREPARATION PATH
 		//
 		// If this node is the target of the vmi's migration, take
 		// a different execute path. The target execute path prepares
 		// the local environment for the migration, but does not
 		// start the VMI
+		log.DefaultLogger().Info("Calling migration target execute path")
 		return c.migrationTargetExecute(vmi, vmiExists, domain)
 	} else if vmiExists && c.isOrphanedMigrationSource(vmi) {
 		// 3. POST-MIGRATION SOURCE CLEANUP
@@ -2146,8 +2160,10 @@ func (c *VirtualMachineController) execute(key string) error {
 		// After a migration, the migrated domain still exists in the old
 		// source's domain cache. Ensure that any node that isn't currently
 		// the target or owner of the VMI handles deleting the domain locally.
+		log.DefaultLogger().Info("Calling post migration execute path")
 		return c.migrationOrphanedSourceNodeExecute(vmi, domainExists)
 	}
+	log.DefaultLogger().Info("Calling default execute path")
 	return c.defaultExecute(key,
 		vmi,
 		vmiExists,
@@ -2162,8 +2178,8 @@ func (c *VirtualMachineController) processVmCleanup(vmi *v1.VirtualMachineInstan
 
 	log.Log.Object(vmi).Infof("Performing final local cleanup for vmi with uid %s", vmiId)
 
-	c.migrationProxy.StopTargetListener(vmiId)
-	c.migrationProxy.StopSourceListener(vmiId)
+	c.migrationProxyManager.StopTargetListener(vmiId)
+	c.migrationProxyManager.StopSourceListener(vmiId)
 
 	c.downwardMetricsManager.StopServer(vmi)
 
@@ -2226,27 +2242,35 @@ func (c *VirtualMachineController) isLauncherClientUnresponsive(vmi *v1.VirtualM
 
 	clientInfo, exists := c.launcherClients.Load(vmi.UID)
 	if exists {
+		log.DefaultLogger().Info("found existing client")
 		if clientInfo.Ready == true {
+			log.DefaultLogger().Info("client is ready")
 			// use cached socket if we previously established a connection
 			socketFile = clientInfo.SocketFile
 		} else {
+			log.DefaultLogger().Info("finding socket file on host")
 			socketFile, err = cmdclient.FindSocketOnHost(vmi)
 			if err != nil {
+				log.DefaultLogger().Infof("socket does not exist: %v", err)
 				// socket does not exist, but let's see if the pod is still there
 				if _, err = cmdclient.FindPodDirOnHost(vmi); err != nil {
+					log.DefaultLogger().Infof("Error finding pod dir: %v", err)
 					// no pod meanst that waiting for it to initialize makes no sense
 					return true, true, nil
 				}
 				// pod is still there, if there is no socket let's wait for it to become ready
 				if clientInfo.NotInitializedSince.Before(time.Now().Add(-3 * time.Minute)) {
+					log.DefaultLogger().Info("client is not initialized, waiting")
 					return true, true, nil
 				}
+				log.DefaultLogger().Info("client is not initialized, waited long enough")
 				return false, false, nil
 			}
 			clientInfo.Ready = true
 			clientInfo.SocketFile = socketFile
 		}
 	} else {
+		log.DefaultLogger().Info("client does not exist")
 		clientInfo := &virtcache.LauncherClientInfo{
 			NotInitializedSince: time.Now(),
 			Ready:               false,
@@ -2256,8 +2280,10 @@ func (c *VirtualMachineController) isLauncherClientUnresponsive(vmi *v1.VirtualM
 		socketFile, err = cmdclient.FindSocketOnHost(vmi)
 		// no socket file, no VMI, so it's unresponsive
 		if err != nil {
+			log.DefaultLogger().Info("socket does not exist")
 			// socket does not exist, but let's see if the pod is still there
 			if _, err = cmdclient.FindPodDirOnHost(vmi); err != nil {
+				log.DefaultLogger().Infof("Error finding pod dir: %v", err)
 				// no pod meanst that waiting for it to initialize makes no sense
 				return true, true, nil
 			}
@@ -2266,6 +2292,7 @@ func (c *VirtualMachineController) isLauncherClientUnresponsive(vmi *v1.VirtualM
 		clientInfo.Ready = true
 		clientInfo.SocketFile = socketFile
 	}
+	log.DefaultLogger().Info("Checking if socket is unresponsive")
 	return cmdclient.IsSocketUnresponsive(socketFile), true, nil
 }
 
@@ -2464,12 +2491,12 @@ func (c *VirtualMachineController) isOrphanedMigrationSource(vmi *v1.VirtualMach
 }
 
 func (c *VirtualMachineController) isPreMigrationTarget(vmi *v1.VirtualMachineInstance) bool {
-
 	migrationTargetNodeName, ok := vmi.Labels[v1.MigrationTargetNodeNameLabel]
 
+	log.DefaultLogger().Infof("is target migration: %t, %s, %s", vmi.IsMigrationTarget(), migrationTargetNodeName, c.host)
 	if ok &&
 		migrationTargetNodeName != "" &&
-		migrationTargetNodeName != vmi.Status.NodeName &&
+		(migrationTargetNodeName != vmi.Status.NodeName || (vmi.IsMigrationTarget() && !vmi.IsMigrationSource())) &&
 		migrationTargetNodeName == c.host {
 		return true
 	}
@@ -2557,9 +2584,9 @@ func (c *VirtualMachineController) isVMIPausedDuringMigration(vmi *v1.VirtualMac
 }
 
 func (c *VirtualMachineController) isMigrationSource(vmi *v1.VirtualMachineInstance) bool {
-
 	if vmi.Status.MigrationState != nil &&
 		vmi.Status.MigrationState.SourceNode == c.host &&
+		vmi.IsMigrationSource() &&
 		vmi.Status.MigrationState.TargetNodeAddress != "" &&
 		!vmi.Status.MigrationState.Completed {
 
@@ -2591,8 +2618,8 @@ func (c *VirtualMachineController) handleTargetMigrationProxy(vmi *v1.VirtualMac
 		destSocketFile := migrationproxy.SourceUnixFile(baseDir, key)
 		migrationTargetSockets = append(migrationTargetSockets, destSocketFile)
 	}
-	err = c.migrationProxy.StartTargetListener(string(vmi.UID), migrationTargetSockets)
-	if err != nil {
+	log.DefaultLogger().Info("Starting target listener")
+	if err := c.migrationProxyManager.StartTargetListener(string(vmi.UID), migrationTargetSockets, c.clientset, c.vmiTargetInformer); err != nil {
 		return err
 	}
 	return nil
@@ -2600,13 +2627,12 @@ func (c *VirtualMachineController) handleTargetMigrationProxy(vmi *v1.VirtualMac
 
 func (c *VirtualMachineController) handlePostMigrationProxyCleanup(vmi *v1.VirtualMachineInstance) {
 	if vmi.Status.MigrationState == nil || vmi.Status.MigrationState.Completed || vmi.Status.MigrationState.Failed {
-		c.migrationProxy.StopTargetListener(string(vmi.UID))
-		c.migrationProxy.StopSourceListener(string(vmi.UID))
+		c.migrationProxyManager.StopTargetListener(string(vmi.UID))
+		c.migrationProxyManager.StopSourceListener(string(vmi.UID))
 	}
 }
 
 func (c *VirtualMachineController) handleSourceMigrationProxy(vmi *v1.VirtualMachineInstance) error {
-
 	res, err := c.podIsolationDetector.Detect(vmi)
 	if err != nil {
 		return err
@@ -2614,20 +2640,43 @@ func (c *VirtualMachineController) handleSourceMigrationProxy(vmi *v1.VirtualMac
 	// the migration-proxy is no longer shared via host mount, so we
 	// pass in the virt-launcher's baseDir to reach the unix sockets.
 	baseDir := fmt.Sprintf(filepath.Join(c.virtLauncherFSRunDirPattern, "kubevirt"), res.Pid())
-	c.migrationProxy.StopTargetListener(string(vmi.UID))
+	c.migrationProxyManager.StopTargetListener(string(vmi.UID))
 	if vmi.Status.MigrationState.TargetDirectMigrationNodePorts == nil {
 		msg := "No migration proxy has been created for this vmi"
 		return fmt.Errorf("%s", msg)
 	}
-	err = c.migrationProxy.StartSourceListener(
-		string(vmi.UID),
-		vmi.Status.MigrationState.TargetNodeAddress,
-		vmi.Status.MigrationState.TargetDirectMigrationNodePorts,
-		baseDir,
-	)
+	if vmi.Status.MigrationState.TargetSyncAddress == "" {
+		log.DefaultLogger().Info("Target sync address not set, waiting for it to be set")
+		return nil
+	}
+	log.DefaultLogger().Info("Starting VMI source sync")
+	err = c.migrationProxyManager.StartSourceSync(string(vmi.UID), vmi.Status.MigrationState.TargetSyncAddress, c.clientset, c.vmiSourceInformer)
 	if err != nil {
+		log.DefaultLogger().Errorf("Failed to start source sync: %v", err)
 		return err
 	}
+
+	vmiConditions := controller.NewVirtualMachineInstanceConditionManager()
+
+	if vmi.Status.MigrationState.TargetNodeAddress != "" && vmiConditions.HasConditionWithStatus(vmi, v1.VirtualMachineInstanceSyncProxyConnected, k8sv1.ConditionTrue) {
+		if err := c.migrationProxyManager.StartSourceListener(
+			string(vmi.UID),
+			vmi.Status.MigrationState.TargetNodeAddress,
+			vmi.Status.MigrationState.TargetDirectMigrationNodePorts,
+			baseDir,
+		); err != nil {
+			return err
+		}
+	}
+
+	// Update this condition after the check, so it causes another reconcile before we attempt the
+	// actual migration. This gives the synchronization time to send a VMI to the other side.
+	vmiConditions.UpdateCondition(vmi, &v1.VirtualMachineInstanceCondition{
+		Type:    v1.VirtualMachineInstanceSyncProxyConnected,
+		Status:  k8sv1.ConditionTrue,
+		Reason:  "MigrationSyncProxyConnected",
+		Message: "The migration sync proxy source is connected to the target",
+	})
 
 	return nil
 }
@@ -2650,7 +2699,7 @@ func isMigrationInProgress(vmi *v1.VirtualMachineInstance, domain *api.Domain) b
 	}
 	domainMigrationMetadata = domain.Spec.Metadata.KubeVirt.Migration
 
-	if vmi.Status.MigrationState.MigrationUID == domainMigrationMetadata.UID &&
+	if (vmi.Status.MigrationState.SourceMigrationUID == domainMigrationMetadata.UID || vmi.Status.MigrationState.TargetMigrationUID == domainMigrationMetadata.UID) &&
 		domainMigrationMetadata.StartTimestamp != nil {
 		return true
 	}
@@ -2670,11 +2719,11 @@ func (c *VirtualMachineController) vmUpdateHelperMigrationSource(origVMI *v1.Vir
 			return err
 		}
 	} else {
-		if isMigrationInProgress(origVMI, domain) {
-			// we already started this migration, no need to rerun this
-			log.DefaultLogger().Errorf("migration %s has already been started", origVMI.Status.MigrationState.MigrationUID)
-			return nil
-		}
+		// if isMigrationInProgress(origVMI, domain) {
+		// 	// we already started this migration, no need to rerun this
+		// 	log.DefaultLogger().Errorf("migration %s has already been started", origVMI.Status.MigrationState.SourceMigrationUID)
+		// 	return nil
+		// }
 
 		err = c.handleSourceMigrationProxy(origVMI)
 		if err != nil {
@@ -2760,6 +2809,7 @@ func (c *VirtualMachineController) vmUpdateHelperMigrationTarget(origVMI *v1.Vir
 		// then there's nothing left to prepare on the target side
 		return nil
 	}
+
 	// The VolumeStatus is used to retrive additional information for the volume handling.
 	// For example, for filesystem PVC, the information are used to create a right size image.
 	// In the case of migrated volumes, we need to replace the original volume information with the
@@ -2854,11 +2904,13 @@ func (c *VirtualMachineController) vmUpdateHelperMigrationTarget(origVMI *v1.Vir
 	options := virtualMachineOptions(nil, 0, nil, c.capabilities, disksInfo, c.clusterConfig)
 	options.InterfaceDomainAttachment = domainspec.DomainAttachmentByInterfaceName(vmi.Spec.Domain.Devices.Interfaces, c.clusterConfig.GetNetworkBindings())
 
+	log.DefaultLogger().Info("syncing migration target")
 	if err := client.SyncMigrationTarget(vmi, options); err != nil {
 		return fmt.Errorf("syncing migration target failed: %v", err)
 	}
 	c.recorder.Event(vmi, k8sv1.EventTypeNormal, v1.PreparingTarget.String(), VMIMigrationTargetPrepared)
 
+	log.DefaultLogger().Info("handleTargetMigrationProxy")
 	err = c.handleTargetMigrationProxy(vmi)
 	if err != nil {
 		return fmt.Errorf("failed to handle post sync migration proxy: %v", err)
@@ -3350,7 +3402,6 @@ func (c *VirtualMachineController) getMemoryDump(vmi *v1.VirtualMachineInstance)
 }
 
 func (c *VirtualMachineController) processVmUpdate(vmi *v1.VirtualMachineInstance, domain *api.Domain) error {
-
 	isUnresponsive, isInitialized, err := c.isLauncherClientUnresponsive(vmi)
 	if err != nil {
 		return err
@@ -3361,14 +3412,16 @@ func (c *VirtualMachineController) processVmUpdate(vmi *v1.VirtualMachineInstanc
 	} else if isUnresponsive {
 		return goerror.New(fmt.Sprintf("Can not update a VirtualMachineInstance with unresponsive command server."))
 	}
-
 	c.handlePostMigrationProxyCleanup(vmi)
 
 	if c.isPreMigrationTarget(vmi) {
+		log.DefaultLogger().Infof("preparing migration target for vmi %s", vmi.Name)
 		return c.vmUpdateHelperMigrationTarget(vmi)
 	} else if c.isMigrationSource(vmi) {
+		log.DefaultLogger().Infof("update migration source vmi %s", vmi.Name)
 		return c.vmUpdateHelperMigrationSource(vmi, domain)
 	} else {
+		log.DefaultLogger().Infof("helper default vmi %s", vmi.Name)
 		return c.vmUpdateHelperDefault(vmi, domain != nil)
 	}
 }
@@ -3453,6 +3506,7 @@ func (c *VirtualMachineController) updateFunc(_, new interface{}) {
 	key, err := controller.KeyFunc(new)
 	if err == nil {
 		c.vmiExpectations.LowerExpectations(key, 1, 0)
+		log.Log.Infof("VMI updated, requeuing: %s", key)
 		c.queue.Add(key)
 	}
 }

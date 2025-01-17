@@ -535,6 +535,22 @@ func (v *VirtualMachineInstance) IsHighPerformanceVMI() bool {
 	return false
 }
 
+func (v *VirtualMachineInstance) IsMigrationTarget() bool {
+	targetMigration := false
+	if value, ok := v.GetAnnotations()[CreateMigrationTarget]; ok && value == "true" {
+		targetMigration = true
+	}
+	return targetMigration
+}
+
+func (v *VirtualMachineInstance) IsMigrationSource() bool {
+	sourceMigration := false
+	if value, ok := v.GetAnnotations()[CreateMigrationSource]; ok && value == "true" {
+		sourceMigration = true
+	}
+	return sourceMigration
+}
+
 type VirtualMachineInstanceConditionType string
 
 // These are valid conditions of VMIs.
@@ -580,6 +596,9 @@ const (
 
 	// Indicates whether the VMI is live migratable
 	VirtualMachineInstanceIsStorageLiveMigratable VirtualMachineInstanceConditionType = "StorageLiveMigratable"
+
+	// Indicates the source has connected to the target and it is possible to synchronize the VMI over the connection
+	VirtualMachineInstanceSyncProxyConnected VirtualMachineInstanceConditionType = "SyncProxyConnected"
 )
 
 // These are valid reasons for VMI conditions.
@@ -675,7 +694,8 @@ func (m *VirtualMachineInstanceMigration) IsRunning() bool {
 // The migration phase indicates that the target pod should have already been created
 func (m *VirtualMachineInstanceMigration) TargetIsCreated() bool {
 	return m.Status.Phase != MigrationPhaseUnset &&
-		m.Status.Phase != MigrationPending
+		m.Status.Phase != MigrationPending &&
+		m.Status.Phase != MigrationPendingTargetVMI
 }
 
 // The migration phase indicates that job has been handed off to the VMI controllers to complete.
@@ -683,7 +703,8 @@ func (m *VirtualMachineInstanceMigration) TargetIsHandedOff() bool {
 	return m.Status.Phase != MigrationPhaseUnset &&
 		m.Status.Phase != MigrationPending &&
 		m.Status.Phase != MigrationScheduling &&
-		m.Status.Phase != MigrationScheduled
+		m.Status.Phase != MigrationScheduled &&
+		m.Status.Phase != MigrationPendingTargetVMI
 }
 
 type VirtualMachineInstanceNetworkInterface struct {
@@ -747,6 +768,10 @@ type VirtualMachineInstanceMigrationState struct {
 	TargetNodeDomainDetected bool `json:"targetNodeDomainDetected,omitempty"`
 	// The address of the target node to use for the migration
 	TargetNodeAddress string `json:"targetNodeAddress,omitempty"`
+	// The url to use to synchronize the VMI with the target
+	TargetSyncAddress string `json:"targetSyncAddress,omitempty"`
+	// The address of the remote target node to use for the migration
+	RemoteTargetNodeAddress string `json:"remoteTargetNodeAddress,omitempty"`
 	// The list of ports opened for live migration on the destination node
 	TargetDirectMigrationNodePorts map[string]int `json:"targetDirectMigrationNodePorts,omitempty"`
 	// The target node that the VMI is moving to
@@ -770,8 +795,10 @@ type VirtualMachineInstanceMigrationState struct {
 	AbortStatus MigrationAbortStatus `json:"abortStatus,omitempty"`
 	// Contains the reason why the migration failed
 	FailureReason string `json:"failureReason,omitempty"`
-	// The VirtualMachineInstanceMigration object associated with this migration
-	MigrationUID types.UID `json:"migrationUid,omitempty"`
+	// The source VirtualMachineInstanceMigration object associated with this migration
+	SourceMigrationUID types.UID `json:"sourceMigrationUid,omitempty"`
+	// The target VirtualMachineInstanceMigration object associated with this migration
+	TargetMigrationUID types.UID `json:"targetMigrationUid,omitempty"`
 	// Lets us know if the vmi is currently running pre or post copy migration
 	Mode MigrationMode `json:"mode,omitempty"`
 	// Name of the migration policy. If string is empty, no policy is matched
@@ -1006,6 +1033,11 @@ const (
 
 	// This annotation represents vmi running nonroot implementation
 	DeprecatedNonRootVMIAnnotation = "kubevirt.io/nonroot"
+
+	// This annotation is used to mark a VMI as a migration target, and to start a receiver pod.
+	CreateMigrationTarget = "kubevirt.io/create-migration-target"
+	// This annotation is used to mark a VMI as a migration source, and to start the migration if we have target.
+	CreateMigrationSource = "kubevirt.io/create-migration-source"
 
 	// This annotation is to keep virt launcher container alive when an VMI encounters a failure for debugging purpose
 	KeepLauncherAfterFailureAnnotation string = "kubevirt.io/keep-launcher-alive-after-failure"
@@ -1371,6 +1403,14 @@ type VirtualMachineInstanceMigration struct {
 	Status            VirtualMachineInstanceMigrationStatus `json:"status,omitempty"`
 }
 
+func (m *VirtualMachineInstanceMigration) IsSource() bool {
+	return m.Spec.Operation == nil || (m.Spec.Operation != nil && *m.Spec.Operation == MigrationSource)
+}
+
+func (m *VirtualMachineInstanceMigration) IsTarget() bool {
+	return m.Spec.Operation == nil || (m.Spec.Operation != nil && *m.Spec.Operation == MigrationTarget)
+}
+
 // VirtualMachineInstanceMigrationList is a list of VirtualMachineMigrations
 //
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -1380,9 +1420,22 @@ type VirtualMachineInstanceMigrationList struct {
 	Items           []VirtualMachineInstanceMigration `json:"items"`
 }
 
+type VirtualMachineInstanceMigrationOperation string
+
+const (
+	MigrationSource VirtualMachineInstanceMigrationOperation = "source"
+	MigrationTarget VirtualMachineInstanceMigrationOperation = "target"
+)
+
 type VirtualMachineInstanceMigrationSpec struct {
 	// The name of the VMI to perform the migration on. VMI must exist in the migration objects namespace
 	VMIName string `json:"vmiName,omitempty" valid:"required"`
+	// The type of operation, either source or target. Target will create a new VMI (if not existing already)
+	// and create a receiving virt-launcher pod. Source will connect to the connect URL to start the migration
+	// if the target is ready
+	Operation *VirtualMachineInstanceMigrationOperation `json:"operation,omitempty"`
+	// Required if operation is source, this is the url the virt-handler will connect to to perform the migration
+	ConnectURL *string `json:"connectURL,omitempty"`
 }
 
 // VirtualMachineInstanceMigrationPhaseTransitionTimestamp gives a timestamp in relation to when a phase is set on a vmi
@@ -1403,6 +1456,8 @@ type VirtualMachineInstanceMigrationStatus struct {
 	PhaseTransitionTimestamps []VirtualMachineInstanceMigrationPhaseTransitionTimestamp `json:"phaseTransitionTimestamps,omitempty"`
 	// Represents the status of a live migration
 	MigrationState *VirtualMachineInstanceMigrationState `json:"migrationState,omitempty"`
+	// SyncEndpoint is the URL that the source will use to synchronize the VMI with the target
+	SyncEndpoint string `json:"syncEndpoint,omitempty"`
 }
 
 // VirtualMachineInstanceMigrationPhase is a label for the condition of a VirtualMachineInstanceMigration at the current time.
@@ -1427,6 +1482,8 @@ const (
 	MigrationSucceeded VirtualMachineInstanceMigrationPhase = "Succeeded"
 	// The migration failed
 	MigrationFailed VirtualMachineInstanceMigrationPhase = "Failed"
+	// The migration is waiting for target VMI to appear
+	MigrationPendingTargetVMI VirtualMachineInstanceMigrationPhase = "PendingTargetVMI"
 )
 
 // Deprecated for removal in v2, please use VirtualMachineInstanceType and VirtualMachinePreference instead.
@@ -1543,6 +1600,9 @@ const (
 	// VMI will run once and not be restarted upon completion regardless
 	// if the completion is of phase Failure or Success
 	RunStrategyOnce VirtualMachineRunStrategy = "Once"
+	// Receiver pod will be created waiting for an incoming migration. Switch after to expected
+	// RunStrategy.
+	RunStrategyWaitAsReceiver VirtualMachineRunStrategy = "WaitAsReceiver"
 )
 
 type UpdateVolumesStrategy string

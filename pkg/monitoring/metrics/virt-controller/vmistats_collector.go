@@ -378,7 +378,8 @@ func collectVMIMigrationTime(vmi *k6tv1.VirtualMachineInstance) []operatormetric
 		return cr
 	}
 
-	migrationName = getMigrationNameFromMigrationUID(vmi.Namespace, vmi.Status.MigrationState.MigrationUID)
+	// TODO: do stats for source as well?
+	migrationName = getMigrationNameFromMigrationUID(vmi.Namespace, vmi.Status.MigrationState.TargetMigrationUID)
 
 	if vmi.Status.MigrationState.StartTimestamp != nil {
 		cr = append(cr, operatormetrics.CollectorResult{
