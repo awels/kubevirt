@@ -146,8 +146,10 @@ func (m *migrationSyncProxy) createTcpListener() (net.Listener, error) {
 	addr := net.JoinHostPort(ip.GetIPZeroAddress(), "0")
 	m.logger.Info("Creating TCP listener")
 	if m.serverTLSConfig != nil {
+		m.logger.Info("Created TLS listener")
 		ln, err = tls.Listen("tcp", addr, m.serverTLSConfig)
 	} else {
+		m.logger.Info("Created standard tcp listener")
 		ln, err = net.Listen("tcp", addr)
 	}
 	if err != nil {
@@ -213,7 +215,13 @@ func (m *migrationSyncProxy) StartTargetSync() error {
 func (m *migrationSyncProxy) StartSourceSync(url string) error {
 	m.logger = m.logger.With("outbound", url)
 	m.logger.Info("dialing sync tcp outbound connection")
-	conn, err := tls.Dial("tcp", url, m.clientTLSConfig)
+	var conn net.Conn
+	var err error
+	if m.clientTLSConfig != nil {
+		conn, err = tls.Dial("tcp", url, m.clientTLSConfig)
+	} else {
+		conn, err = net.Dial("tcp", url)
+	}
 	if err != nil {
 		m.logger.Reason(err).Error("failed to dial sync proxy")
 		return err

@@ -25695,6 +25695,13 @@ func schema_kubevirtio_api_core_v1_VirtualMachineInstanceMigrationState(ref comm
 							Format:      "",
 						},
 					},
+					"migrationNetworkType": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The type of migration network, either 'pod' or 'migration'",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
 					"targetNodeAddress": {
 						SchemaProps: spec.SchemaProps{
 							Description: "The address of the target node to use for the migration",

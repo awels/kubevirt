@@ -322,6 +322,11 @@ func (app *virtHandlerApp) Run() {
 	if err != nil {
 		panic(err)
 	}
+	migrationAddressType := v1.Pod
+	if migrationIpAddress != app.PodIpAddress {
+		// address is different, assume we are using the migration network
+		migrationAddressType = v1.Migration
+	}
 
 	downwardMetricsManager := dmetricsmanager.NewDownwardMetricsManager(app.HostOverride)
 
@@ -330,6 +335,7 @@ func (app *virtHandlerApp) Run() {
 		app.virtCli,
 		app.HostOverride,
 		migrationIpAddress,
+		migrationAddressType,
 		app.VirtShareDir,
 		app.VirtPrivateDir,
 		app.KubeletPodsDir,

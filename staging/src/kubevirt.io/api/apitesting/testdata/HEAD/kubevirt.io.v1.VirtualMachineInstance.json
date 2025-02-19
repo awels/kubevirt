@@ -921,6 +921,7 @@
       "endTimestamp": "1988-01-01T01:01:01Z",
       "targetNodeDomainReadyTimestamp": "1970-01-01T01:01:01Z",
       "targetNodeDomainDetected": true,
+      "migrationNetworkType": "migrationNetworkTypeValue",
       "targetNodeAddress": "targetNodeAddressValue",
       "targetSyncAddress": "targetSyncAddressValue",
       "remoteTargetNodeAddress": "remoteTargetNodeAddressValue",

@@ -13693,6 +13693,9 @@ var CRDsValidation map[string]string = map[string]string{
                     indicates the migration will be unsafe to the guest. Defaults to false
                   type: boolean
               type: object
+            migrationNetworkType:
+              description: The type of migration network, either 'pod' or 'migration'
+              type: string
             migrationPolicyName:
               description: Name of the migration policy. If string is empty, no policy
                 is matched
@@ -14142,6 +14145,9 @@ var CRDsValidation map[string]string = map[string]string{
                     indicates the migration will be unsafe to the guest. Defaults to false
                   type: boolean
               type: object
+            migrationNetworkType:
+              description: The type of migration network, either 'pod' or 'migration'
+              type: string
             migrationPolicyName:
               description: Name of the migration policy. If string is empty, no policy
                 is matched

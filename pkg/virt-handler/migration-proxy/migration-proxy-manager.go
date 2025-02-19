@@ -298,7 +298,10 @@ func (m *migrationProxyManager) StartSourceSync(vmiUID, syncAddress string, clie
 	_, exists := m.sourceSyncProxy[vmiUID]
 	if !exists {
 		m.sourceSyncProxy[vmiUID], err = NewMigrationSyncProxy(vmiInformer, client, m.clientTLSConfig, m.serverTLSConfig)
-		m.sourceSyncProxy[vmiUID].StartSourceSync(syncAddress)
+		if err != nil {
+			return err
+		}
+		err = m.sourceSyncProxy[vmiUID].StartSourceSync(syncAddress)
 	}
 	return err
 }

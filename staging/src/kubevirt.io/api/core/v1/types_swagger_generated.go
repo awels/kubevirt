@@ -219,6 +219,7 @@ func (VirtualMachineInstanceMigrationState) SwaggerDoc() map[string]string {
 		"endTimestamp":                   "The time the migration action ended\n+nullable",
 		"targetNodeDomainReadyTimestamp": "The timestamp at which the target node detects the domain is active",
 		"targetNodeDomainDetected":       "The Target Node has seen the Domain Start Event",
+		"migrationNetworkType":           "The type of migration network, either 'pod' or 'migration'",
 		"targetNodeAddress":              "The address of the target node to use for the migration",
 		"targetSyncAddress":              "The url to use to synchronize the VMI with the target",
 		"remoteTargetNodeAddress":        "The address of the remote target node to use for the migration",

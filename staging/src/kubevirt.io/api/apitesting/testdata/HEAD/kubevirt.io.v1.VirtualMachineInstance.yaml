@@ -672,6 +672,7 @@ status:
       parallelOutboundMigrationsPerNode: 4294967263
       progressTimeout: -15
       unsafeMigrationOverride: true
+    migrationNetworkType: migrationNetworkTypeValue
     migrationPolicyName: migrationPolicyNameValue
     mode: modeValue
     remoteTargetNodeAddress: remoteTargetNodeAddressValue

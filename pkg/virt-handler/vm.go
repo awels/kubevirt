@@ -163,6 +163,7 @@ func NewController(
 	clientset kubecli.KubevirtClient,
 	host string,
 	migrationIpAddress string,
+	migrationNetworkType v1.MigrationNetworkType,
 	virtShareDir string,
 	virtPrivateDir string,
 	kubeletPodsDir string,
@@ -202,6 +203,7 @@ func NewController(
 		clientset:                        clientset,
 		host:                             host,
 		migrationIpAddress:               migrationIpAddress,
+		migrationNetworkType:             migrationNetworkType,
 		virtShareDir:                     virtShareDir,
 		vmiSourceInformer:                vmiSourceInformer,
 		vmiTargetInformer:                vmiTargetInformer,
@@ -295,6 +297,7 @@ type VirtualMachineController struct {
 	clientset                kubecli.KubevirtClient
 	host                     string
 	migrationIpAddress       string
+	migrationNetworkType     v1.MigrationNetworkType
 	virtShareDir             string
 	virtPrivateDir           string
 	queue                    workqueue.TypedRateLimitingInterface[string]
@@ -801,15 +804,18 @@ func (c *VirtualMachineController) migrationTargetUpdateVMIStatus(vmi *v1.Virtua
 			}
 		}
 		if hostAddress != c.migrationIpAddress {
+			migrationAddress := hostAddress
+			if hostAddress == "" {
+				migrationAddress = c.migrationIpAddress
+			}
 			portsList := make([]string, 0, len(destSrcPortsMap))
-			migrationAddress := c.migrationIpAddress
-
 			for k := range destSrcPortsMap {
 				portsList = append(portsList, k)
 			}
 			portsStrList := strings.Trim(strings.Join(strings.Fields(fmt.Sprint(portsList)), ","), "[]")
 			c.recorder.Event(vmi, k8sv1.EventTypeNormal, v1.PreparingTarget.String(), fmt.Sprintf("Migration Target is listening at %s, on ports: %s", migrationAddress, portsStrList))
 			vmiCopy.Status.MigrationState.TargetNodeAddress = migrationAddress
+			vmiCopy.Status.MigrationState.MigrationNetworkType = c.migrationNetworkType
 		}
 		destSrcPortsMap[c.migrationProxyManager.GetSyncPort(string(vmi.UID))] = migrationproxy.VMISyncPort
 		vmiCopy.Status.MigrationState.TargetDirectMigrationNodePorts = destSrcPortsMap

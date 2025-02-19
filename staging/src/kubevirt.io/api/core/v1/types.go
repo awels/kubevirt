@@ -204,6 +204,15 @@ type TopologyHints struct {
 	TSCFrequency *int64 `json:"tscFrequency,omitempty"`
 }
 
+type MigrationNetworkType string
+
+const (
+	// PodNetworkMigration indicates the migration will happen over the pod network
+	Pod MigrationNetworkType = "Pod"
+	// MigrationNetworkMigration indicates the migration will happen over a dedicated migration network
+	Migration MigrationNetworkType = "Migration"
+)
+
 // VirtualMachineInstanceStatus represents information about the status of a VirtualMachineInstance. Status may trail the actual
 // state of a system.
 type VirtualMachineInstanceStatus struct {
@@ -766,6 +775,8 @@ type VirtualMachineInstanceMigrationState struct {
 	TargetNodeDomainReadyTimestamp *metav1.Time `json:"targetNodeDomainReadyTimestamp,omitempty"`
 	// The Target Node has seen the Domain Start Event
 	TargetNodeDomainDetected bool `json:"targetNodeDomainDetected,omitempty"`
+	// The type of migration network, either 'pod' or 'migration'
+	MigrationNetworkType MigrationNetworkType `json:"migrationNetworkType,omitempty"`
 	// The address of the target node to use for the migration
 	TargetNodeAddress string `json:"targetNodeAddress,omitempty"`
 	// The url to use to synchronize the VMI with the target
