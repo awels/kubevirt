@@ -544,6 +544,13 @@ func (v *VirtualMachineInstance) IsHighPerformanceVMI() bool {
 	return false
 }
 
+func (v *VirtualMachineInstance) IsSyncedWithRemote() bool {
+	// Once
+	return v.Status.MigrationState != nil &&
+		v.Status.MigrationState.SourceNode != "" &&
+		len(v.Status.MigrationState.TargetDirectMigrationNodePorts) > 0
+}
+
 func (v *VirtualMachineInstance) IsMigrationTarget() bool {
 	targetMigration := false
 	if value, ok := v.GetAnnotations()[CreateMigrationTarget]; ok && value == "true" {
@@ -704,6 +711,8 @@ func (m *VirtualMachineInstanceMigration) IsRunning() bool {
 func (m *VirtualMachineInstanceMigration) TargetIsCreated() bool {
 	return m.Status.Phase != MigrationPhaseUnset &&
 		m.Status.Phase != MigrationPending &&
+		m.Status.Phase != MigrationWaitingForVMISync &&
+		m.Status.Phase != MigrationWaitingForVMISyncEndpoint &&
 		m.Status.Phase != MigrationPendingTargetVMI
 }
 
@@ -713,6 +722,8 @@ func (m *VirtualMachineInstanceMigration) TargetIsHandedOff() bool {
 		m.Status.Phase != MigrationPending &&
 		m.Status.Phase != MigrationScheduling &&
 		m.Status.Phase != MigrationScheduled &&
+		m.Status.Phase != MigrationWaitingForVMISync &&
+		m.Status.Phase != MigrationWaitingForVMISyncEndpoint &&
 		m.Status.Phase != MigrationPendingTargetVMI
 }
 
@@ -791,10 +802,14 @@ type VirtualMachineInstanceMigrationState struct {
 	TargetPod string `json:"targetPod,omitempty"`
 	// The UID of the target attachment pod for hotplug volumes
 	TargetAttachmentPodUID types.UID `json:"targetAttachmentPodUID,omitempty"`
+	TargetDomainName       string    `json:"targetDomainName,omitempty"`
+	TargetDomainNamespace  string    `json:"targetDomainNamespace,omitempty"`
 
 	// The source node that the VMI originated on
 	SourceNode string `json:"sourceNode,omitempty"`
 	SourcePod  string `json:"sourcePod,omitempty"`
+
+	SourceNodeSelectors map[string]string `json:"sourceNodeSelectors,omitempty"`
 
 	// Indicates the migration completed
 	Completed bool `json:"completed,omitempty"`
@@ -810,6 +825,10 @@ type VirtualMachineInstanceMigrationState struct {
 	SourceMigrationUID types.UID `json:"sourceMigrationUid,omitempty"`
 	// The target VirtualMachineInstanceMigration object associated with this migration
 	TargetMigrationUID types.UID `json:"targetMigrationUid,omitempty"`
+	// The source VirtualMachineInstance UID
+	SourceVirtualMachineInstanceUID types.UID `json:"sourceVirtualMachineInstanceUid,omitempty"`
+	// The target VirtualMachineInstance UID
+	TargetVirtualMachineInstanceUID types.UID `json:"targetVirtualMachineInstanceUid,omitempty"`
 	// Lets us know if the vmi is currently running pre or post copy migration
 	Mode MigrationMode `json:"mode,omitempty"`
 	// Name of the migration policy. If string is empty, no policy is matched
@@ -945,6 +964,11 @@ const (
 	// Machine Instance migration job. Needed because with CRDs we can't use field
 	// selectors. Used on VirtualMachineInstance.
 	MigrationTargetNodeNameLabel string = "kubevirt.io/migrationTargetNodeName"
+	// This label indicates we are waiting for the sync process to setup
+	MigrationSyncLabel string = "kubevirt.io/migration-sync"
+	// This label describes which node will run the synchronization channel for
+	// a migration
+	SyncTargetNodeName string = "kubevirt.io/syncTargetNodeName"
 	// This annotation indicates that a migration is the result of an
 	// automated evacuation
 	EvacuationMigrationAnnotation string = "kubevirt.io/evacuationMigration"
@@ -1047,8 +1071,12 @@ const (
 
 	// This annotation is used to mark a VMI as a migration target, and to start a receiver pod.
 	CreateMigrationTarget = "kubevirt.io/create-migration-target"
+	// This annotation is used to mark a VMI as a migration target, and to start a receiver pod.
+	WaitForSyncTarget = "kubevirt.io/wait-forsync-target"
 	// This annotation is used to mark a VMI as a migration source, and to start the migration if we have target.
 	CreateMigrationSource = "kubevirt.io/create-migration-source"
+	// RestoreRunStrategy is how to restore the run strategy of the VMI
+	RestoreRunStrategy = "kubevirt.io/restore-run-strategy"
 
 	// This annotation is to keep virt launcher container alive when an VMI encounters a failure for debugging purpose
 	KeepLauncherAfterFailureAnnotation string = "kubevirt.io/keep-launcher-alive-after-failure"
@@ -1447,6 +1475,8 @@ type VirtualMachineInstanceMigrationSpec struct {
 	Operation *VirtualMachineInstanceMigrationOperation `json:"operation,omitempty"`
 	// Required if operation is source, this is the url the virt-handler will connect to to perform the migration
 	ConnectURL *string `json:"connectURL,omitempty"`
+	// Optional if operation is target, this is when migrating inside the same cluster but a different namespace.
+	NodeAntiAffinity *string `json:"nodeAntiAffinity,omitempty"`
 }
 
 // VirtualMachineInstanceMigrationPhaseTransitionTimestamp gives a timestamp in relation to when a phase is set on a vmi
@@ -1468,7 +1498,7 @@ type VirtualMachineInstanceMigrationStatus struct {
 	// Represents the status of a live migration
 	MigrationState *VirtualMachineInstanceMigrationState `json:"migrationState,omitempty"`
 	// SyncEndpoint is the URL that the source will use to synchronize the VMI with the target
-	SyncEndpoint string `json:"syncEndpoint,omitempty"`
+	SyncEndpoint *string `json:"syncEndpoint,omitempty"`
 }
 
 // VirtualMachineInstanceMigrationPhase is a label for the condition of a VirtualMachineInstanceMigration at the current time.
@@ -1493,6 +1523,10 @@ const (
 	MigrationSucceeded VirtualMachineInstanceMigrationPhase = "Succeeded"
 	// The migration failed
 	MigrationFailed VirtualMachineInstanceMigrationPhase = "Failed"
+	// The migration is waiting for the initial VMI sync before starting the receiver pod
+	MigrationWaitingForVMISyncEndpoint VirtualMachineInstanceMigrationPhase = "WaitingForVMISyncEndpoint"
+	// The migration is waiting for the initial VMI sync before starting the receiver pod
+	MigrationWaitingForVMISync VirtualMachineInstanceMigrationPhase = "WaitingForVMISync"
 	// The migration is waiting for target VMI to appear
 	MigrationPendingTargetVMI VirtualMachineInstanceMigrationPhase = "PendingTargetVMI"
 )

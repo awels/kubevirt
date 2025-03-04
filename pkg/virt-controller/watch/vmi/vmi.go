@@ -309,6 +309,9 @@ func (c *Controller) execute(key string) error {
 		logger.Reason(err).Error("Failed to fetch pods for namespace from cache.")
 		return err
 	}
+	if pod == nil {
+		log.Log.Infof("Unable to locate current pod for vmi %s/%s, %v", vmi.Namespace, vmi.Name, vmi.Status.ActivePods)
+	}
 
 	// Get all dataVolumes associated with this vmi
 	dataVolumes, err := storagetypes.ListDataVolumesFromVolumes(vmi.Namespace, vmi.Spec.Volumes, c.dataVolumeIndexer, c.pvcIndexer)
@@ -508,6 +511,7 @@ func (c *Controller) updateStatus(vmi *virtv1.VirtualMachineInstance, pod *k8sv1
 		if vmiPodExists {
 			vmiCopy.Status.Phase = virtv1.Scheduling
 		} else if vmi.DeletionTimestamp != nil || hasFailedDataVolume {
+			log.Log.Info("VMI Failed because deletion timestamp not nil or has failed data volume")
 			vmiCopy.Status.Phase = virtv1.Failed
 		} else {
 			vmiCopy.Status.Phase = virtv1.Pending
@@ -536,6 +540,7 @@ func (c *Controller) updateStatus(vmi *virtv1.VirtualMachineInstance, pod *k8sv1
 						conditionManager.RemoveCondition(vmiCopy, virtv1.VirtualMachineInstanceConditionType(k8sv1.PodScheduled))
 					}
 					if controller.IsPodFailedOrGoingDown(pod) {
+						log.Log.Info("VMI Failed because pod is failed or going down")
 						vmiCopy.Status.Phase = virtv1.Failed
 					}
 				}
@@ -604,6 +609,7 @@ func (c *Controller) updateStatus(vmi *virtv1.VirtualMachineInstance, pod *k8sv1
 
 				// vmi is still owned by the controller but pod is already ready,
 				// so let's hand over the vmi too
+				log.Log.Infof("Pod %s/%s is ready, setting VMI phase to %s", pod.Namespace, pod.Name, virtv1.Scheduled)
 				vmiCopy.Status.Phase = virtv1.Scheduled
 				if vmiCopy.Labels == nil {
 					vmiCopy.Labels = map[string]string{}
@@ -626,10 +632,12 @@ func (c *Controller) updateStatus(vmi *virtv1.VirtualMachineInstance, pod *k8sv1
 					}
 				}
 			} else if controller.IsPodDownOrGoingDown(pod) {
+				log.Log.Info("VMI Failed because pod is down or going down")
 				vmiCopy.Status.Phase = virtv1.Failed
 			}
 		} else {
 			// someone other than the controller deleted the pod unexpectedly
+			log.Log.Info("VMI Failed because other reasons")
 			vmiCopy.Status.Phase = virtv1.Failed
 		}
 	case vmi.IsFinal():
@@ -653,7 +661,11 @@ func (c *Controller) updateStatus(vmi *virtv1.VirtualMachineInstance, pod *k8sv1
 		}
 
 	case vmi.IsRunning():
-		if !vmiPodExists {
+		if vmi.Status.MigrationState != nil {
+			log.Log.Infof("Running SourceNode: %s, migration port count %d", vmi.Status.MigrationState.SourceNode, len(vmi.Status.MigrationState.TargetDirectMigrationNodePorts))
+		}
+		if !vmiPodExists && vmi.IsSyncedWithRemote() {
+			log.Log.Info("VMI Failed because vmi is running, but pod is not found")
 			vmiCopy.Status.Phase = virtv1.Failed
 			break
 		}
@@ -662,10 +674,11 @@ func (c *Controller) updateStatus(vmi *virtv1.VirtualMachineInstance, pod *k8sv1
 			return err
 		}
 
-		if err := c.updateNetworkStatus(vmiCopy, pod); err != nil {
-			log.Log.Errorf("failed to update the interface status: %v", err)
+		if vmiPodExists {
+			if err := c.updateNetworkStatus(vmiCopy, pod); err != nil {
+				log.Log.Errorf("failed to update the interface status: %v", err)
+			}
 		}
-
 		if c.requireCPUHotplug(vmiCopy) {
 			c.syncHotplugCondition(vmiCopy, virtv1.VirtualMachineInstanceVCPUChange)
 		}
@@ -679,7 +692,11 @@ func (c *Controller) updateStatus(vmi *virtv1.VirtualMachineInstance, pod *k8sv1
 		}
 
 	case vmi.IsScheduled():
-		if !vmiPodExists {
+		if vmi.Status.MigrationState != nil {
+			log.Log.Infof("SourceNode: %s, migration port count %d", vmi.Status.MigrationState.SourceNode, len(vmi.Status.MigrationState.TargetDirectMigrationNodePorts))
+		}
+		if !vmiPodExists && vmi.IsSyncedWithRemote() {
+			log.Log.Info("VMI Failed because vmi is scheduled, but pod is not found")
 			vmiCopy.Status.Phase = virtv1.Failed
 		}
 	default:
@@ -986,7 +1003,7 @@ func (c *Controller) sync(vmi *virtv1.VirtualMachineInstance, pod *k8sv1.Pod, da
 		return syncErr, pod
 	}
 
-	if !controller.PodExists(pod) {
+	if !controller.PodExists(pod) && !vmi.IsMigrationTarget() {
 		log.DefaultLogger().Info("VMI pod doesn't exist, creating it")
 		// If we came ever that far to detect that we already created a pod, we don't create it again
 		if !vmi.IsUnprocessed() {
@@ -1060,6 +1077,13 @@ func (c *Controller) sync(vmi *virtv1.VirtualMachineInstance, pod *k8sv1.Pod, da
 			return nil, pod
 		}
 		return nil, nil
+	} else if !vmi.IsSyncedWithRemote() {
+		if pod != nil {
+			log.Log.Infof("Waiting for sync, returning nil, pod %s/%s", pod.Namespace, pod.Name)
+		} else {
+			log.Log.Info("Waiting for sync, returning nil, nil")
+		}
+		return nil, pod
 	}
 
 	if !isWaitForFirstConsumer {
@@ -1577,6 +1601,9 @@ func (c *Controller) setActivePods(vmi *virtv1.VirtualMachineInstance) (*virtv1.
 }
 
 func isTempPod(pod *k8sv1.Pod) bool {
+	if pod == nil {
+		return false
+	}
 	_, ok := pod.Annotations[virtv1.EphemeralProvisioningObject]
 	return ok
 }
@@ -2000,19 +2027,23 @@ func (c *Controller) updateVolumeStatus(vmi *virtv1.VirtualMachineInstance, virt
 		oldStatusMap[status.Name] = status
 	}
 
-	hotplugVolumes := controller.GetHotplugVolumes(vmi, virtlauncherPod)
+	var attachmentPod *k8sv1.Pod
+	var attachmentPods []*k8sv1.Pod
 	hotplugVolumesMap := make(map[string]*virtv1.Volume)
-	for _, volume := range hotplugVolumes {
-		hotplugVolumesMap[volume.Name] = volume
+	if virtlauncherPod != nil {
+		var err error
+		hotplugVolumes := controller.GetHotplugVolumes(vmi, virtlauncherPod)
+		for _, volume := range hotplugVolumes {
+			hotplugVolumesMap[volume.Name] = volume
+		}
+
+		attachmentPods, err = controller.AttachmentPods(virtlauncherPod, c.podIndexer)
+		if err != nil {
+			return err
+		}
+
+		attachmentPod, _ = c.getActiveAndOldAttachmentPods(hotplugVolumes, attachmentPods)
 	}
-
-	attachmentPods, err := controller.AttachmentPods(virtlauncherPod, c.podIndexer)
-	if err != nil {
-		return err
-	}
-
-	attachmentPod, _ := c.getActiveAndOldAttachmentPods(hotplugVolumes, attachmentPods)
-
 	newStatus := make([]virtv1.VolumeStatus, 0)
 
 	backendStoragePVC := backendstorage.PVCForVMI(c.pvcIndexer, vmi)

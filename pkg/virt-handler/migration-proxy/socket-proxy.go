@@ -182,6 +182,7 @@ func (m *migrationProxy) createUnixListener() error {
 		return err
 	}
 
+	m.logger.Infof("creating unix socket listener at path %s", m.unixSocketPath)
 	listener, err := net.Listen("unix", m.unixSocketPath)
 	if err != nil {
 		m.logger.Reason(err).Error("failed to create unix socket for proxy service")
@@ -233,6 +234,17 @@ func (m *migrationProxy) handleConnection(fd io.ReadWriteCloser) {
 	}
 	if err != nil {
 		m.logger.Reason(err).Error("unable to create outbound leg of proxy to host")
+		m.logger.Infof("unix socket path: %s", m.targetAddress)
+		dir := filepath.Dir(m.targetAddress)
+		m.logger.Infof("Reading directory %s", dir)
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			m.logger.Reason(err).Error("unable to list files in directory")
+		}
+		m.logger.Infof("Number of files in directory: %d", len(files))
+		for _, file := range files {
+			m.logger.Infof("file: %s", file.Name())
+		}
 		return
 	}
 

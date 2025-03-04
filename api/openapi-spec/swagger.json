@@ -16852,6 +16852,10 @@
       "description": "Required if operation is source, this is the url the virt-handler will connect to to perform the migration",
       "type": "string"
      },
+     "nodeAntiAffinity": {
+      "description": "Optional if operation is target, this is when migrating inside the same cluster but a different namespace.",
+      "type": "string"
+     },
      "operation": {
       "description": "The type of operation, either source or target. Target will create a new VMI (if not existing already) and create a receiving virt-launcher pod. Source will connect to the connect URL to start the migration if the target is ready",
       "type": "string"
@@ -16917,11 +16921,22 @@
       "description": "The source node that the VMI originated on",
       "type": "string"
      },
+     "sourceNodeSelectors": {
+      "type": "object",
+      "additionalProperties": {
+       "type": "string",
+       "default": ""
+      }
+     },
      "sourcePersistentStatePVCName": {
       "description": "If the VMI being migrated uses persistent features (backend-storage), its source PVC name is saved here",
       "type": "string"
      },
      "sourcePod": {
+      "type": "string"
+     },
+     "sourceVirtualMachineInstanceUid": {
+      "description": "The source VirtualMachineInstance UID",
       "type": "string"
      },
      "startTimestamp": {
@@ -16950,6 +16965,12 @@
        "format": "int32",
        "default": 0
       }
+     },
+     "targetDomainName": {
+      "type": "string"
+     },
+     "targetDomainNamespace": {
+      "type": "string"
      },
      "targetMigrationUid": {
       "description": "The target VirtualMachineInstanceMigration object associated with this migration",
@@ -16985,6 +17006,10 @@
      },
      "targetSyncAddress": {
       "description": "The url to use to synchronize the VMI with the target",
+      "type": "string"
+     },
+     "targetVirtualMachineInstanceUid": {
+      "description": "The target VirtualMachineInstance UID",
       "type": "string"
      }
     }

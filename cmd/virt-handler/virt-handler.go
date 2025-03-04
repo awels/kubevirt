@@ -236,6 +236,7 @@ func (app *virtHandlerApp) Run() {
 
 	vmiSourceInformer := factory.VMISourceHost(app.HostOverride)
 	vmiTargetInformer := factory.VMITargetHost(app.HostOverride)
+	vmiSyncInformer := factory.VMISync()
 
 	// Wire Domain controller
 	domainSharedInformer := virtcache.NewSharedInformer(app.VirtShareDir, int(app.WatchdogTimeoutDuration.Seconds()), recorder, vmiSourceInformer.GetStore(), time.Duration(app.domainResyncPeriodSeconds)*time.Second)
@@ -341,6 +342,7 @@ func (app *virtHandlerApp) Run() {
 		app.KubeletPodsDir,
 		vmiSourceInformer,
 		vmiTargetInformer,
+		vmiSyncInformer,
 		domainSharedInformer,
 		app.MaxDevices,
 		app.clusterConfig,

@@ -102,6 +102,9 @@ type KubeInformerFactory interface {
 	// as a migration target
 	VMITargetHost(hostName string) cache.SharedIndexInformer
 
+	// Watches for vmi objects that need to have sync configured
+	VMISync() cache.SharedIndexInformer
+
 	// Watches for VirtualMachineInstanceReplicaSet objects
 	VMIReplicaSet() cache.SharedIndexInformer
 
@@ -486,6 +489,18 @@ func (f *kubeInformerFactory) VMITargetHost(hostName string) cache.SharedIndexIn
 				return []string{obj.(*kubev1.VirtualMachineInstance).Status.NodeName}, nil
 			},
 		})
+	})
+}
+
+func (f *kubeInformerFactory) VMISync() cache.SharedIndexInformer {
+	labelSelector, err := labels.Parse(fmt.Sprintf("%s == true", kubev1.MigrationSyncLabel))
+	if err != nil {
+		panic(err)
+	}
+
+	return f.getInformer("vmiInformer-sync", func() cache.SharedIndexInformer {
+		lw := NewListWatchFromClient(f.restClient, "virtualmachineinstances", k8sv1.NamespaceAll, fields.Everything(), labelSelector)
+		return cache.NewSharedIndexInformer(lw, &kubev1.VirtualMachineInstance{}, f.defaultResync, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 	})
 }
 

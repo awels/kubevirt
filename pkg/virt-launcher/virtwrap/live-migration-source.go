@@ -194,6 +194,16 @@ func convertCPUDedicatedFields(domain *api.Domain, domcfg *libvirtxml.Domain) er
 	return nil
 }
 
+func convertDisks(domSpec *api.DomainSpec, domcfg *libvirtxml.Domain) error {
+	for i, disk := range domSpec.Devices.Disks {
+		if disk.Source.File != "" {
+			log.Log.Infof("Updating disk %s source file from %s to %s", disk.Alias.GetName(), domcfg.Devices.Disks[i].Source.File.File, disk.Source.File)
+			domcfg.Devices.Disks[i].Source.File.File = disk.Source.File
+		}
+	}
+	return nil
+}
+
 // This returns domain xml without the metadata section, as it is only relevant to the source domain
 // Note: Unfortunately we can't just use UnMarshall + Marshall here, as that leads to unwanted XML alterations
 func migratableDomXML(dom cli.VirDomain, vmi *v1.VirtualMachineInstance, domSpec *api.DomainSpec) (string, error) {
@@ -207,6 +217,9 @@ func migratableDomXML(dom cli.VirDomain, vmi *v1.VirtualMachineInstance, domSpec
 	}
 	domcfg := &libvirtxml.Domain{}
 	if err := domcfg.Unmarshal(xmlstr); err != nil {
+		return "", err
+	}
+	if err = convertDisks(domSpec, domcfg); err != nil {
 		return "", err
 	}
 	if vmi.IsCPUDedicated() {
@@ -223,6 +236,7 @@ func migratableDomXML(dom cli.VirDomain, vmi *v1.VirtualMachineInstance, domSpec
 		if err = convertCPUDedicatedFields(domain, domcfg); err != nil {
 			return "", err
 		}
+
 	}
 	// set slice size for local disks to migrate
 	if err := configureLocalDiskToMigrate(domcfg, vmi); err != nil {
@@ -353,6 +367,7 @@ func (l *LibvirtDomainManager) initializeMigrationMetadata(vmi *v1.VirtualMachin
 		Mode:           migrationMode,
 	}
 	l.metadataCache.Migration.Store(m)
+	log.Log.Object(vmi).Infof("initialize migration metadata: %#v", m)
 	log.Log.V(4).Infof("initialize migration metadata: %v", m)
 	return false, nil
 }
@@ -745,21 +760,53 @@ func (l *LibvirtDomainManager) asyncMigrationAbort(vmi *v1.VirtualMachineInstanc
 	}(l, vmi)
 }
 
+func generateDomainName(vmi *v1.VirtualMachineInstance) string {
+	namespace := vmi.Namespace
+	name := vmi.Name
+	if vmi.Status.MigrationState != nil && vmi.Status.MigrationState.TargetDomainName != "" && vmi.Status.MigrationState.TargetDomainNamespace != "" {
+		name = vmi.Status.MigrationState.TargetDomainName
+		namespace = vmi.Status.MigrationState.TargetDomainNamespace
+	}
+	return fmt.Sprintf("%s_%s", namespace, name)
+}
+
 func generateMigrationParams(dom cli.VirDomain, vmi *v1.VirtualMachineInstance, options *cmdclient.MigrationOptions, virtShareDir string, domSpec *api.DomainSpec) (*libvirt.DomainMigrateParameters, error) {
 	bandwidth, err := vcpu.QuantityToMebiByte(options.Bandwidth)
 	if err != nil {
 		return nil, err
 	}
 
+	// Modify the domain XML to update paths to the target volumes to match the new domain
+	for i, disk := range domSpec.Devices.Disks {
+		if strings.Contains(disk.Source.File, vmi.Namespace) {
+			// Need to update the namespace in the path to the new namespace.
+			oldPath := disk.Source.File
+			domSpec.Devices.Disks[i].Source.File = strings.Replace(disk.Source.File, vmi.Namespace, vmi.Status.MigrationState.TargetDomainNamespace, 1)
+			log.Log.Infof("Updated disk %s source path to %s", oldPath, domSpec.Devices.Disks[i].Source.File)
+		}
+	}
+	for _, disk := range domSpec.Devices.Disks {
+		if disk.Source.Dev != "" {
+			log.Log.Infof("Paths of disk %s: %s", disk.Alias.GetName(), disk.Source.Dev)
+		} else if disk.Source.File != "" {
+			log.Log.Infof("Paths of disk %s: %s", disk.Alias.GetName(), disk.Source.File)
+		}
+	}
 	xmlstr, err := migratableDomXML(dom, vmi, domSpec)
 	if err != nil {
 		return nil, err
 	}
 
+	log.Log.Object(vmi).Infof("Replacing VMI UID %s with target VMI UID %s in the XML", vmi.UID, vmi.Status.MigrationState.TargetVirtualMachineInstanceUID)
+	// Replace all occurances of the VMI UID in the XML with the target UID.
+	xmlstr = strings.ReplaceAll(xmlstr, string(vmi.UID), string(vmi.Status.MigrationState.TargetVirtualMachineInstanceUID))
+
 	parallelMigrationSet, parallelMigrationThreads := shouldConfigureParallelMigration(options)
 
 	key := migrationproxy.ConstructProxyKey(string(vmi.UID), migrationproxy.LibvirtDirectMigrationPort)
+	log.Log.Object(vmi).Infof("migration proxy key: %s", key)
 	migrURI := fmt.Sprintf("unix://%s", migrationproxy.SourceUnixFile(virtShareDir, key))
+	log.Log.Object(vmi).Infof("migration URI: %s", migrURI)
 	params := &libvirt.DomainMigrateParameters{
 		URI:                    migrURI,
 		URISet:                 true,
@@ -771,6 +818,8 @@ func generateMigrationParams(dom cli.VirDomain, vmi *v1.VirtualMachineInstance, 
 		PersistXMLSet:          true,
 		ParallelConnectionsSet: parallelMigrationSet,
 		ParallelConnections:    parallelMigrationThreads,
+		DestName:               generateDomainName(vmi),
+		DestNameSet:            true,
 	}
 
 	copyDisks := getDiskTargetsForMigration(dom, vmi)
@@ -779,7 +828,9 @@ func generateMigrationParams(dom cli.VirDomain, vmi *v1.VirtualMachineInstance, 
 		params.MigrateDisksSet = true
 		// add a socket for live block migration
 		key := migrationproxy.ConstructProxyKey(string(vmi.UID), migrationproxy.LibvirtBlockMigrationPort)
+		log.Log.Object(vmi).Infof("block migration proxy key: %s", key)
 		disksURI := fmt.Sprintf("unix://%s", migrationproxy.SourceUnixFile(virtShareDir, key))
+		log.Log.Object(vmi).Infof("block migration URI: %s", disksURI)
 		params.DisksURI = disksURI
 		params.DisksURISet = true
 		params.MigrateDisksDetectZeroesList = copyDisks
@@ -969,6 +1020,7 @@ func (l *LibvirtDomainManager) migrateHelper(vmi *v1.VirtualMachineInstance, opt
 		if err != nil {
 			return fmt.Errorf("failed to get domain spec: %v", err)
 		}
+
 		params, err = generateMigrationParams(dom, vmi, options, l.virtShareDir, domSpec)
 		if err != nil {
 			return fmt.Errorf("error encountered while generating migration parameters: %v", err)

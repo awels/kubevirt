@@ -5210,6 +5210,11 @@ func (in *VirtualMachineInstanceMigrationSpec) DeepCopyInto(out *VirtualMachineI
 		*out = new(string)
 		**out = **in
 	}
+	if in.NodeAntiAffinity != nil {
+		in, out := &in.NodeAntiAffinity, &out.NodeAntiAffinity
+		*out = new(string)
+		**out = **in
+	}
 	return
 }
 
@@ -5241,6 +5246,13 @@ func (in *VirtualMachineInstanceMigrationState) DeepCopyInto(out *VirtualMachine
 	if in.TargetDirectMigrationNodePorts != nil {
 		in, out := &in.TargetDirectMigrationNodePorts, &out.TargetDirectMigrationNodePorts
 		*out = make(map[string]int, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
+	if in.SourceNodeSelectors != nil {
+		in, out := &in.SourceNodeSelectors, &out.SourceNodeSelectors
+		*out = make(map[string]string, len(*in))
 		for key, val := range *in {
 			(*out)[key] = val
 		}
@@ -5294,6 +5306,11 @@ func (in *VirtualMachineInstanceMigrationStatus) DeepCopyInto(out *VirtualMachin
 		in, out := &in.MigrationState, &out.MigrationState
 		*out = new(VirtualMachineInstanceMigrationState)
 		(*in).DeepCopyInto(*out)
+	}
+	if in.SyncEndpoint != nil {
+		in, out := &in.SyncEndpoint, &out.SyncEndpoint
+		*out = new(string)
+		**out = **in
 	}
 	return
 }

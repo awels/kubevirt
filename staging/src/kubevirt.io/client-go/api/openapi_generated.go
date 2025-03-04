@@ -25658,6 +25658,13 @@ func schema_kubevirtio_api_core_v1_VirtualMachineInstanceMigrationSpec(ref commo
 							Format:      "",
 						},
 					},
+					"nodeAntiAffinity": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Optional if operation is target, this is when migrating inside the same cluster but a different namespace.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
 				},
 			},
 		},
@@ -25760,6 +25767,18 @@ func schema_kubevirtio_api_core_v1_VirtualMachineInstanceMigrationState(ref comm
 							Format:      "",
 						},
 					},
+					"targetDomainName": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"string"},
+							Format: "",
+						},
+					},
+					"targetDomainNamespace": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"string"},
+							Format: "",
+						},
+					},
 					"sourceNode": {
 						SchemaProps: spec.SchemaProps{
 							Description: "The source node that the VMI originated on",
@@ -25771,6 +25790,21 @@ func schema_kubevirtio_api_core_v1_VirtualMachineInstanceMigrationState(ref comm
 						SchemaProps: spec.SchemaProps{
 							Type:   []string{"string"},
 							Format: "",
+						},
+					},
+					"sourceNodeSelectors": {
+						SchemaProps: spec.SchemaProps{
+							Type: []string{"object"},
+							AdditionalProperties: &spec.SchemaOrBool{
+								Allows: true,
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Default: "",
+										Type:    []string{"string"},
+										Format:  "",
+									},
+								},
+							},
 						},
 					},
 					"completed": {
@@ -25818,6 +25852,20 @@ func schema_kubevirtio_api_core_v1_VirtualMachineInstanceMigrationState(ref comm
 					"targetMigrationUid": {
 						SchemaProps: spec.SchemaProps{
 							Description: "The target VirtualMachineInstanceMigration object associated with this migration",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"sourceVirtualMachineInstanceUid": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The source VirtualMachineInstance UID",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"targetVirtualMachineInstanceUid": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The target VirtualMachineInstance UID",
 							Type:        []string{"string"},
 							Format:      "",
 						},

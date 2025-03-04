@@ -188,6 +188,7 @@ func (l *LibvirtDomainManager) prepareMigrationTarget(
 	if canSourceMigrateOverUnixURI(vmi) {
 		// Prepare the directory for migration sockets
 		migrationSocketsPath := filepath.Join(l.virtShareDir, "migrationproxy")
+		logger.Infof("Creating socketpath for unix migration %s", migrationSocketsPath)
 		err = util.MkdirAllWithNosec(migrationSocketsPath)
 		if err != nil {
 			logger.Reason(err).Error("failed to create the migration sockets directory")
@@ -207,6 +208,7 @@ func (l *LibvirtDomainManager) prepareMigrationTarget(
 			key := migrationproxy.ConstructProxyKey(string(vmi.UID), port)
 			curDirectAddress := net.JoinHostPort(loopbackAddress, strconv.Itoa(port))
 			unixSocketPath := migrationproxy.SourceUnixFile(l.virtShareDir, key)
+			logger.Infof("Creating socketpath for unix migration/tcp %s", unixSocketPath)
 			migrationProxy := migrationproxy.NewSourceSocketProxy(unixSocketPath, curDirectAddress, nil, nil, string(vmi.UID))
 
 			err := migrationProxy.Start()

@@ -167,7 +167,7 @@ var _ = Describe("MigrationProxy", func() {
 				})
 				manager := NewMigrationProxyManager(tlsConfig, tlsConfig, config)
 				manager.StartTargetListener("mykey", []string{virtqemudSock, directSock}, nil, vmiInformer)
-				destSrcPortMap := manager.GetTargetListenerPorts("mykey")
+				destSrcPortMap := manager.GetTargetListenerPorts("mykey", "mykey")
 				manager.StartSourceListener("mykey", "127.0.0.1", destSrcPortMap, tmpDir)
 
 				defer manager.StopTargetListener("myKey")
@@ -236,7 +236,7 @@ var _ = Describe("MigrationProxy", func() {
 				manager := NewMigrationProxyManager(tlsConfig, tlsConfig, config)
 				err = manager.StartTargetListener(key1, []string{virtqemudSock, directSock}, nil, vmiInformer)
 				Expect(err).ShouldNot(HaveOccurred())
-				destSrcPortMap := manager.GetTargetListenerPorts(key1)
+				destSrcPortMap := manager.GetTargetListenerPorts(key1, key1)
 				err = manager.StartSourceListener(key1, "127.0.0.1", destSrcPortMap, tmpDir)
 				Expect(err).ShouldNot(HaveOccurred())
 

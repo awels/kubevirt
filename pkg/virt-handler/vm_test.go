@@ -1638,7 +1638,7 @@ var _ = Describe("VirtualMachineInstance", func() {
 			err = controller.handleTargetMigrationProxy(vmi)
 			Expect(err).NotTo(HaveOccurred())
 
-			destSrcPorts := controller.migrationProxyManager.GetTargetListenerPorts(string(vmi.UID))
+			destSrcPorts := controller.migrationProxyManager.GetTargetListenerPorts(string(vmi.UID), string(vmi.UID))
 			updatedVmi := vmi.DeepCopy()
 			updatedVmi.Status.MigrationState.TargetNodeAddress = controller.migrationIpAddress
 			updatedVmi.Status.MigrationState.TargetDirectMigrationNodePorts = destSrcPorts
@@ -1711,7 +1711,7 @@ var _ = Describe("VirtualMachineInstance", func() {
 			err = controller.handleTargetMigrationProxy(vmi)
 			Expect(err).NotTo(HaveOccurred())
 
-			destSrcPorts := controller.migrationProxyManager.GetTargetListenerPorts(string(vmi.UID))
+			destSrcPorts := controller.migrationProxyManager.GetTargetListenerPorts(string(vmi.UID), string(vmi.UID))
 			updatedVmi := vmi.DeepCopy()
 			updatedVmi.Status.MigrationState.TargetNodeAddress = controller.migrationIpAddress
 			updatedVmi.Status.MigrationState.TargetDirectMigrationNodePorts = destSrcPorts

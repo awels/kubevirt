@@ -548,11 +548,11 @@ func isComputeContainerFailed(pod *k8sv1.Pod) bool {
 }
 
 func PodIsDown(pod *k8sv1.Pod) bool {
-	return pod.Status.Phase == k8sv1.PodSucceeded || pod.Status.Phase == k8sv1.PodFailed
+	return !PodExists(pod) || pod.Status.Phase == k8sv1.PodSucceeded || pod.Status.Phase == k8sv1.PodFailed
 }
 
 func isPodFailed(pod *k8sv1.Pod) bool {
-	return pod.Status.Phase == k8sv1.PodFailed
+	return PodExists(pod) && pod.Status.Phase == k8sv1.PodFailed
 }
 
 func PodExists(pod *k8sv1.Pod) bool {

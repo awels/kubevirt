@@ -161,6 +161,7 @@ func (l *Launcher) SyncMigrationTarget(_ context.Context, request *cmdv1.VMIRequ
 	if !response.Success {
 		return response, nil
 	}
+	log.Log.Object(vmi).Info("Preparing migration target")
 
 	if err := l.domainManager.PrepareMigrationTarget(vmi, l.allowEmulation, request.Options); err != nil {
 		log.Log.Object(vmi).Reason(err).Errorf("Failed to prepare migration target pod")

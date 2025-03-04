@@ -33,6 +33,7 @@ import (
 
 	"kubevirt.io/kubevirt/pkg/instancetype/revision"
 	"kubevirt.io/kubevirt/pkg/liveupdate/memory"
+	"kubevirt.io/kubevirt/pkg/pointer"
 
 	netadmitter "kubevirt.io/kubevirt/pkg/network/admitter"
 	"kubevirt.io/kubevirt/pkg/network/vmispec"
@@ -1203,7 +1204,10 @@ func (c *Controller) StartVMI(vm *virtv1.VirtualMachine) (*virtv1.VirtualMachine
 	setGenerationAnnotationOnVmi(vm.Generation, vmi)
 
 	if vm.Spec.RunStrategy == nil || *vm.Spec.RunStrategy == virtv1.RunStrategyWaitAsReceiver {
+		log.Log.Infof("Setting up receiver VMI %s/%s", vmi.Namespace, vmi.Name)
 		vmi.Annotations[virtv1.CreateMigrationTarget] = "true"
+		vmi.Annotations[virtv1.WaitForSyncTarget] = "true"
+		vmi.Labels[virtv1.MigrationSyncLabel] = "true"
 	}
 	// add a finalizer to ensure the VM controller has a chance to see
 	// the VMI before it is deleted
@@ -3034,6 +3038,12 @@ func (c *Controller) sync(vm *virtv1.VirtualMachine, vmi *virtv1.VirtualMachineI
 	vm, syncErr = c.syncRunStrategy(vm, vmi, runStrategy)
 	if syncErr != nil {
 		return vm, vmi, syncErr, nil
+	}
+	if vm.Spec.RunStrategy != nil && *vm.Spec.RunStrategy == virtv1.RunStrategyWaitAsReceiver {
+		// Restore the original run strategy
+		if val, ok := vm.Annotations[virtv1.RestoreRunStrategy]; ok {
+			vm.Spec.RunStrategy = pointer.P(virtv1.VirtualMachineRunStrategy(val))
+		}
 	}
 
 	restartRequired := c.addRestartRequiredIfNeeded(startVMSpec, vm, vmi)

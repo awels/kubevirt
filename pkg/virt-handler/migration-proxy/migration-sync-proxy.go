@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"io"
 	"net"
+	"reflect"
 	"strconv"
 	"time"
 
@@ -64,14 +65,16 @@ type migrationSyncProxy struct {
 	remoteVMIStore   cache.Store
 	bindPort         int
 	listener         net.Listener
+	namespace        string
 
 	logger    *log.FilteredLogger
 	hasSynced func() bool
 }
 
-func NewMigrationSyncProxy(vmiInformer cache.SharedIndexInformer, client kubecli.KubevirtClient, clientTLSConfig, serverTLSConfig *tls.Config) (MigrationSyncProxy, error) {
+func NewMigrationSyncProxy(namespace string, vmiInformer cache.SharedIndexInformer, client kubecli.KubevirtClient, clientTLSConfig, serverTLSConfig *tls.Config) (MigrationSyncProxy, error) {
 	proxy := &migrationSyncProxy{
 		client:           client,
+		namespace:        namespace,
 		stopChan:         make(chan struct{}),
 		errChan:          make(chan error),
 		connChan:         make(chan io.ReadWriteCloser),
@@ -117,13 +120,6 @@ func (m *migrationSyncProxy) addFunc(addObj interface{}) {
 		m.logger.Error("failed to cast addObj to VMI")
 	}
 }
-
-// func (m *migrationSyncHandler) deleteFunc(delObj interface{}) {
-// 	key, err := controller.KeyFunc(delObj)
-// 	if err == nil {
-// 		m.queue.Add(key)
-// 	}
-// }
 
 func (m *migrationSyncProxy) updateFunc(_, new interface{}) {
 	vmi, ok := new.(*virtv1.VirtualMachineInstance)
@@ -199,6 +195,7 @@ func (m *migrationSyncProxy) StartTargetSync() error {
 		for {
 			select {
 			case rwc := <-m.connChan:
+				m.conn = rwc
 				go m.handleIncomingVMI(rwc)
 			case <-m.stopChan:
 				return
@@ -232,6 +229,7 @@ func (m *migrationSyncProxy) StartSourceSync(url string) error {
 	go func() {
 		m.handleIncomingVMI(conn)
 	}()
+	go m.Run(m.stopChan)
 
 	return nil
 }
@@ -275,7 +273,6 @@ func (m *migrationSyncProxy) execute(key string) error {
 	if err != nil {
 		return err
 	}
-	m.logger.Infof("localVMI keys: %v, %v", m.localVMIStore.ListKeys(), m.localVMIInformer.GetStore().ListKeys())
 	remoteVMI, remoteVMIExists, err := m.getVMIFromRemoteCache(key)
 	if err != nil {
 		return err
@@ -284,20 +281,75 @@ func (m *migrationSyncProxy) execute(key string) error {
 	// TODO: Update labels if needed.
 	m.logger.Infof("localVMIExists: %v, remoteVMIExists: %v", localVMIExists, remoteVMIExists)
 	if localVMIExists && remoteVMIExists {
-		localVMIStatus := localVMI.Status.DeepCopy()
-		remoteVMIStatus := remoteVMI.Status.DeepCopy()
-		if !equality.Semantic.DeepEqual(localVMIStatus.MigrationState, remoteVMIStatus.MigrationState) {
-			localVMI.Status.MigrationState = remoteVMI.Status.MigrationState
-			m.logger.Infof("Updating VMI %s with new migration state: %v", localVMI.Name, localVMI.Status.MigrationState)
-			if _, err := m.client.VirtualMachineInstance(localVMI.Namespace).UpdateStatus(context.Background(), localVMI, metav1.UpdateOptions{}); err != nil {
+		localVMICopy := localVMI.DeepCopy()
+		for _, volumeStatus := range localVMICopy.Status.VolumeStatus {
+			m.logger.Infof("Before merge local migration volume status: %#v", volumeStatus)
+		}
+		for _, volumeStatus := range remoteVMI.Status.VolumeStatus {
+			m.logger.Infof("Before merge remote migration volume status: %#v", volumeStatus)
+		}
+		localVMICopy.Status = *m.mergeLocalCopyMigrationStatusWithRemote(&localVMICopy.Status, &remoteVMI.Status)
+		if !equality.Semantic.DeepEqual(localVMICopy.Status, localVMI.Status) {
+			if _, err := m.client.VirtualMachineInstance(localVMI.Namespace).Update(context.Background(), localVMICopy, metav1.UpdateOptions{}); err != nil {
 				return err
 			}
 		} else {
 			m.logger.Info("No update needed, migration states match")
 		}
 	}
+	if m.needsRemoteSync(localVMI, remoteVMI) {
+		if err := m.SynchronizeVMI(localVMI); err != nil {
+			m.logger.Reason(err).Error("failed to synchronize VMI, after update")
+			return err
+		}
+	}
 	return nil
 }
+
+func (m *migrationSyncProxy) needsRemoteSync(localVMI, remoteVMI *virtv1.VirtualMachineInstance) bool {
+	localMigrationState := localVMI.Status.MigrationState
+	if localMigrationState == nil {
+		localMigrationState = &virtv1.VirtualMachineInstanceMigrationState{}
+	}
+	remoteMigrationState := remoteVMI.Status.MigrationState
+	if remoteMigrationState == nil {
+		remoteMigrationState = &virtv1.VirtualMachineInstanceMigrationState{}
+	}
+	if m.bindPort == 0 {
+		// source proxy
+		migrationConfigrationChanged := false
+		if localMigrationState.MigrationConfiguration != nil && remoteMigrationState.MigrationConfiguration != nil {
+			migrationConfigrationChanged = !reflect.DeepEqual(localMigrationState.MigrationConfiguration, remoteMigrationState.MigrationConfiguration)
+		}
+		return localMigrationState.SourceMigrationUID != remoteMigrationState.SourceMigrationUID ||
+			localMigrationState.SourceNode != remoteMigrationState.SourceNode ||
+			localMigrationState.SourceVirtualMachineInstanceUID != remoteMigrationState.SourceVirtualMachineInstanceUID ||
+			localMigrationState.SourcePod != remoteMigrationState.SourcePod ||
+			localMigrationState.MigrationNetworkType != remoteMigrationState.MigrationNetworkType ||
+			migrationConfigrationChanged ||
+			localMigrationState.StartTimestamp != remoteMigrationState.StartTimestamp
+	} else {
+		// target proxy
+		migrationConfigrationChanged := false
+		if localMigrationState.MigrationConfiguration != nil && remoteMigrationState.MigrationConfiguration != nil {
+			migrationConfigrationChanged = !reflect.DeepEqual(localMigrationState.MigrationConfiguration, remoteMigrationState.MigrationConfiguration)
+		}
+		nodePortsChanged := false
+		if localMigrationState.TargetDirectMigrationNodePorts != nil && remoteMigrationState.TargetDirectMigrationNodePorts != nil {
+			nodePortsChanged = !reflect.DeepEqual(localMigrationState.TargetDirectMigrationNodePorts, remoteMigrationState.TargetDirectMigrationNodePorts)
+		}
+		return localMigrationState.MigrationNetworkType != remoteMigrationState.MigrationNetworkType ||
+			migrationConfigrationChanged ||
+			localMigrationState.TargetNodeAddress != remoteMigrationState.TargetNodeAddress ||
+			nodePortsChanged ||
+			localMigrationState.TargetNodeDomainDetected != remoteMigrationState.TargetNodeDomainDetected ||
+			localMigrationState.TargetNodeDomainReadyTimestamp != remoteMigrationState.TargetNodeDomainReadyTimestamp ||
+			localMigrationState.TargetPod != remoteMigrationState.TargetPod ||
+			localMigrationState.TargetNode != remoteMigrationState.TargetNode ||
+			localMigrationState.StartTimestamp != remoteMigrationState.StartTimestamp
+	}
+}
+
 func (m *migrationSyncProxy) getVMIFromRemoteCache(key string) (vmi *virtv1.VirtualMachineInstance, exists bool, err error) {
 	return getVMIFromCache(key, m.remoteVMIStore)
 }
@@ -346,7 +398,8 @@ func (m *migrationSyncProxy) handleIncomingVMI(rwc io.ReadWriteCloser) {
 				m.logger.Reason(err).Error("failed to decode incoming VMI")
 				return
 			}
-			m.logger.Infof("Received VMI: %s", vmi.Name)
+			m.logger.Infof("Received VMI: %s/%s, replacing with %s", vmi.Namespace, vmi.Name, m.namespace)
+			vmi.Namespace = m.namespace
 
 			currentVMI, exists, err := m.remoteVMIStore.GetByKey(controller.VirtualMachineInstanceKey(vmi))
 			if err != nil {
@@ -354,39 +407,101 @@ func (m *migrationSyncProxy) handleIncomingVMI(rwc io.ReadWriteCloser) {
 				return
 			}
 			if !exists {
+				m.logger.Infof("VMI %s not found in remote store, adding it", controller.VirtualMachineInstanceKey(vmi))
 				if err := m.remoteVMIStore.Add(vmi); err != nil {
 					m.logger.Reason(err).Error("failed to add VMI to remote store")
 					return
 				}
+				m.logger.Infof("Adding VMI to sync queue: %s", controller.VirtualMachineInstanceKey(vmi))
+				// Find the VMI labels and status that needs to be updated locally.
+				m.queue.Add(controller.VirtualMachineInstanceKey(vmi))
 			} else {
 				// Only update if the incoming VMI is newer than the current one
 				if vmi.ResourceVersion > currentVMI.(*virtv1.VirtualMachineInstance).ResourceVersion {
+					m.logger.Infof("VMI %s already exists in remote store, updating it", controller.VirtualMachineInstanceKey(vmi))
 					if err := m.remoteVMIStore.Update(vmi); err != nil {
 						m.logger.Reason(err).Error("failed to update VMI in remote store")
 						return
 					}
+					m.logger.Infof("Adding VMI to sync queue: %s", controller.VirtualMachineInstanceKey(vmi))
+					// Find the VMI labels and status that needs to be updated locally.
+					m.queue.Add(controller.VirtualMachineInstanceKey(vmi))
+				} else {
+					m.logger.Infof("VMI %s already exists in remote store and is up to date", controller.VirtualMachineInstanceKey(vmi))
 				}
 			}
-			m.logger.Infof("Adding VMI to sync queue: %s", controller.VirtualMachineInstanceKey(vmi))
-			// Find the VMI labels and status that needs to be updated locally.
-			m.queue.Add(controller.VirtualMachineInstanceKey(vmi))
 		}
 	}
+}
+
+func (m *migrationSyncProxy) mergeLocalCopyMigrationStatusWithRemote(localVMIStatus, remoteVMIStatus *virtv1.VirtualMachineInstanceStatus) *virtv1.VirtualMachineInstanceStatus {
+	local := &virtv1.VirtualMachineInstanceStatus{}
+	if localVMIStatus != nil {
+		local = localVMIStatus.DeepCopy()
+	}
+	if local.MigrationState == nil {
+		local.MigrationState = &virtv1.VirtualMachineInstanceMigrationState{}
+	}
+	if remoteVMIStatus.MigrationState != nil {
+		m.logger.Info("merging remote VMI migration state into local VMI")
+		if local.MigrationState.MigrationConfiguration == nil || remoteVMIStatus.MigrationState.MigrationConfiguration != nil {
+			local.MigrationState.MigrationConfiguration = remoteVMIStatus.MigrationState.MigrationConfiguration
+		}
+		if local.MigrationState.MigrationNetworkType == "" || remoteVMIStatus.MigrationState.MigrationNetworkType != "" {
+			local.MigrationState.MigrationNetworkType = remoteVMIStatus.MigrationState.MigrationNetworkType
+		}
+		if remoteVMIStatus.MigrationState.StartTimestamp != nil {
+			local.MigrationState.StartTimestamp = remoteVMIStatus.MigrationState.StartTimestamp
+		}
+		if m.bindPort == 0 {
+			// bindPort = 0 means we are the source proxy
+			// So when we receive a VMI from the target, we are only interested in propagating
+			// the changes to the target fields in the migration state
+			local.MigrationState.TargetNodeAddress = remoteVMIStatus.MigrationState.TargetNodeAddress
+			local.MigrationState.TargetDirectMigrationNodePorts = remoteVMIStatus.MigrationState.TargetDirectMigrationNodePorts
+			local.MigrationState.TargetNodeDomainDetected = remoteVMIStatus.MigrationState.TargetNodeDomainDetected
+			local.MigrationState.TargetNodeDomainReadyTimestamp = remoteVMIStatus.MigrationState.TargetNodeDomainReadyTimestamp
+			local.MigrationState.TargetPod = remoteVMIStatus.MigrationState.TargetPod
+			local.MigrationState.TargetNode = remoteVMIStatus.MigrationState.TargetNode
+			local.MigrationState.TargetMigrationUID = remoteVMIStatus.MigrationState.TargetMigrationUID
+			local.MigrationState.TargetDomainName = remoteVMIStatus.MigrationState.TargetDomainName
+			local.MigrationState.TargetDomainNamespace = remoteVMIStatus.MigrationState.TargetDomainNamespace
+			local.MigrationState.TargetVirtualMachineInstanceUID = remoteVMIStatus.MigrationState.TargetVirtualMachineInstanceUID
+		} else {
+			// bindPort != 0 means we are the target proxy
+			// Wants to copy the entire VMI status to the target, but keep the target fields.
+			local = remoteVMIStatus.DeepCopy()
+			local.MigrationState.TargetNodeAddress = localVMIStatus.MigrationState.TargetNodeAddress
+			local.MigrationState.TargetDirectMigrationNodePorts = localVMIStatus.MigrationState.TargetDirectMigrationNodePorts
+			local.MigrationState.TargetNodeDomainDetected = localVMIStatus.MigrationState.TargetNodeDomainDetected
+			local.MigrationState.TargetNodeDomainReadyTimestamp = localVMIStatus.MigrationState.TargetNodeDomainReadyTimestamp
+			local.MigrationState.TargetPod = localVMIStatus.MigrationState.TargetPod
+			local.MigrationState.TargetNode = localVMIStatus.MigrationState.TargetNode
+			local.MigrationState.TargetMigrationUID = localVMIStatus.MigrationState.TargetMigrationUID
+			local.Phase = localVMIStatus.Phase
+			local.ActivePods = localVMIStatus.ActivePods
+			local.NodeName = localVMIStatus.NodeName
+		}
+	}
+	return local
 }
 
 func (m *migrationSyncProxy) SynchronizeVMI(vmi *virtv1.VirtualMachineInstance) error {
 	if m.conn != nil {
 		m.logger.Info("marshalling VMI")
 		json, err := json.Marshal(vmi)
-		m.logger.Infof("Marshalled VMI: %s", string(json))
 		if err != nil {
+			m.logger.Reason(err).Error("failed to marshal VMI")
 			return err
 		}
+		// m.logger.Infof("Marshalled VMI: %s", string(json))
 
-		m.logger.V(5).Infof("Sending VMI: %s", vmi.Name)
+		m.logger.Infof("Sending VMI: %s", vmi.Name)
+		// m.logger.V(5).Infof("Sending VMI: %s", vmi.Name)
 		//Write data to socket.
 		writtenCount, err := m.conn.Write(json)
 		if err != nil {
+			m.logger.Reason(err).Error("failed to send VMI")
 			return err
 		}
 		if writtenCount != len(json) {
@@ -394,6 +509,7 @@ func (m *migrationSyncProxy) SynchronizeVMI(vmi *virtv1.VirtualMachineInstance) 
 		}
 	} else {
 		m.logger.Info("No connection to send VMI")
+		m.queue.AddAfter(controller.VirtualMachineInstanceKey(vmi), 2*time.Second)
 	}
 	return nil
 }

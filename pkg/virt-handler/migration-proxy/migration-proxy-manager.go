@@ -34,12 +34,13 @@ import (
 )
 
 type ProxyManager interface {
-	StartTargetListener(vmiUID string, targetUnixFiles []string, client kubecli.KubevirtClient, vmiInformer cache.SharedIndexInformer) error
-	GetTargetListenerPorts(vmiUID string) map[string]int
+	StartTargetListener(vmiUID, namespace string, targetUnixFiles []string, client kubecli.KubevirtClient) error
+	StartTargetSyncProxy(vmiUID, namespace string, client kubecli.KubevirtClient, vmiInformer cache.SharedIndexInformer) error
+	GetTargetListenerPorts(vmiUID, sourceVMIUID string) map[string]int
 	GetSyncPort(vmiUID string) string
 	StopTargetListener(vmiUID string)
 
-	StartSourceSync(vmiUID, syncAddress string, client kubecli.KubevirtClient, vmiInformer cache.SharedIndexInformer) error
+	StartSourceSync(vmiUID, namespace, syncAddress string, client kubecli.KubevirtClient, vmiInformer cache.SharedIndexInformer) error
 	StartSourceListener(vmiUID string, targetAddress string, destSrcPortMap map[string]int, baseDir string) error
 	GetSourceListenerFiles(vmiUID string) []string
 	StopSourceListener(vmiUID string)
@@ -113,7 +114,7 @@ func (m *migrationProxyManager) createTargetSocketProxies(vmiUID string, targetU
 	proxiesList := []MigrationProxyListener{}
 	zeroAddress := ip.GetIPZeroAddress()
 	for _, targetUnixFile := range targetUnixFiles {
-		log.DefaultLogger().Infof("Creating proxy for file: %s", targetUnixFile)
+		log.Log.Infof("Creating proxy for file: %s, uid %s", targetUnixFile, vmiUID)
 		// 0 means random port is used
 		proxy := NewTargetSocketProxy(zeroAddress, 0, serverTLSConfig, clientTLSConfig, targetUnixFile, vmiUID)
 		log.DefaultLogger().Infof("Created proxy: %#v", proxy)
@@ -127,12 +128,12 @@ func (m *migrationProxyManager) createTargetSocketProxies(vmiUID string, targetU
 			return nil, err
 		}
 		proxiesList = append(proxiesList, proxy)
-		m.logger.Infof("Manager created proxy on target")
+		m.logger.Infof("Manager created proxy on target, socket path: %s", targetUnixFile)
 	}
 	return proxiesList, nil
 }
 
-func (m *migrationProxyManager) StartTargetListener(vmiUID string, targetUnixFiles []string, client kubecli.KubevirtClient, vmiInformer cache.SharedIndexInformer) error {
+func (m *migrationProxyManager) StartTargetListener(vmiUID, namespace string, targetUnixFiles []string, client kubecli.KubevirtClient) error {
 	m.managerLock.Lock()
 	defer m.managerLock.Unlock()
 
@@ -144,7 +145,7 @@ func (m *migrationProxyManager) StartTargetListener(vmiUID string, targetUnixFil
 	if exists {
 		if m.isTargetExistingProxy(curProxies, targetUnixFiles) {
 			// No Op, already exists
-			return m.startTargetSyncProxy(vmiUID, client, vmiInformer)
+			return nil
 		} else {
 			// stop the current proxy and point it somewhere new.
 			for _, curProxy := range curProxies {
@@ -170,15 +171,14 @@ func (m *migrationProxyManager) StartTargetListener(vmiUID string, targetUnixFil
 		return err
 	}
 	m.targetProxies[vmiUID] = proxiesList
-
-	return m.startTargetSyncProxy(vmiUID, client, vmiInformer)
+	return nil
 }
 
-func (m *migrationProxyManager) startTargetSyncProxy(vmiUID string, client kubecli.KubevirtClient, vmiInformer cache.SharedIndexInformer) error {
+func (m *migrationProxyManager) StartTargetSyncProxy(vmiUID, namespace string, client kubecli.KubevirtClient, vmiInformer cache.SharedIndexInformer) error {
 	var err error
 	_, exists := m.targetSyncProxy[vmiUID]
 	if !exists {
-		m.targetSyncProxy[vmiUID], err = NewMigrationSyncProxy(vmiInformer, client, m.clientTLSConfig, m.serverTLSConfig)
+		m.targetSyncProxy[vmiUID], err = NewMigrationSyncProxy(namespace, vmiInformer, client, m.clientTLSConfig, m.serverTLSConfig)
 		m.targetSyncProxy[vmiUID].StartTargetSync()
 	}
 	return err
@@ -201,7 +201,7 @@ func (m *migrationProxyManager) GetSourceListenerFiles(vmiUID string) []string {
 	return socketsList
 }
 
-func (m *migrationProxyManager) GetTargetListenerPorts(vmiUID string) map[string]int {
+func (m *migrationProxyManager) GetTargetListenerPorts(vmiUID, sourceVMIUID string) map[string]int {
 	m.managerLock.Lock()
 	defer m.managerLock.Unlock()
 
@@ -211,8 +211,8 @@ func (m *migrationProxyManager) GetTargetListenerPorts(vmiUID string) map[string
 
 	if exists {
 		for _, curProxy := range curProxies {
-			m.logger.Infof("target proxy bind port: %s, target port: %d", curProxy.GetBindPort(), curProxy.GetTargetPort(vmiUID))
-			targetSrcPortMap[curProxy.GetBindPort()] = curProxy.GetTargetPort(vmiUID)
+			m.logger.Infof("target proxy bind port: %s, target port: %d", curProxy.GetBindPort(), curProxy.GetTargetPort(sourceVMIUID))
+			targetSrcPortMap[curProxy.GetBindPort()] = curProxy.GetTargetPort(sourceVMIUID)
 		}
 	}
 	log.DefaultLogger().Infof("Map: %#v", targetSrcPortMap)
@@ -292,12 +292,12 @@ func (m *migrationProxyManager) createSourceSocketProxies(vmiUID, targetAddress 
 	return proxiesList, nil
 }
 
-func (m *migrationProxyManager) StartSourceSync(vmiUID, syncAddress string, client kubecli.KubevirtClient, vmiInformer cache.SharedIndexInformer) error {
+func (m *migrationProxyManager) StartSourceSync(vmiUID, namespace, syncAddress string, client kubecli.KubevirtClient, vmiInformer cache.SharedIndexInformer) error {
 	m.logger.Infof("Starting source sync for VMI UID %s", vmiUID)
 	var err error
 	_, exists := m.sourceSyncProxy[vmiUID]
 	if !exists {
-		m.sourceSyncProxy[vmiUID], err = NewMigrationSyncProxy(vmiInformer, client, m.clientTLSConfig, m.serverTLSConfig)
+		m.sourceSyncProxy[vmiUID], err = NewMigrationSyncProxy(namespace, vmiInformer, client, m.clientTLSConfig, m.serverTLSConfig)
 		if err != nil {
 			return err
 		}
@@ -319,6 +319,7 @@ func (m *migrationProxyManager) StartSourceListener(vmiUID string, targetAddress
 	if exists {
 		if isSourceExistingProxy(curProxies, targetAddress, destSrcPortMap) {
 			// No Op, already exists
+			log.Log.Info("Source proxy already exists, skipping creation")
 			return nil
 		} else {
 			// stop the current proxy and point it somewhere new.

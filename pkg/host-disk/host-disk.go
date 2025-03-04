@@ -109,6 +109,7 @@ func replaceForHostDisk(volumeSource *v1.VolumeSource, volumeName string, pvcVol
 	volumeStatus := pvcVolume[volumeName]
 	isShared := types.HasSharedAccessMode(volumeStatus.PersistentVolumeClaimInfo.AccessModes)
 	file := getPVCDiskImgPath(volumeName, "disk.img")
+	log.Log.Infof("PVC information: %v", volumeStatus.PersistentVolumeClaimInfo)
 	capacity, capacityOk := volumeStatus.PersistentVolumeClaimInfo.Capacity[k8sv1.ResourceStorage]
 	requested, requestedOk := volumeStatus.PersistentVolumeClaimInfo.Requests[k8sv1.ResourceStorage]
 

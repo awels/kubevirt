@@ -678,14 +678,19 @@ status:
     remoteTargetNodeAddress: remoteTargetNodeAddressValue
     sourceMigrationUid: sourceMigrationUidValue
     sourceNode: sourceNodeValue
+    sourceNodeSelectors:
+      sourceNodeSelectorsKey: sourceNodeSelectorsValue
     sourcePersistentStatePVCName: sourcePersistentStatePVCNameValue
     sourcePod: sourcePodValue
+    sourceVirtualMachineInstanceUid: sourceVirtualMachineInstanceUidValue
     startTimestamp: "1986-01-01T01:01:01Z"
     targetAttachmentPodUID: targetAttachmentPodUIDValue
     targetCPUSet:
     - -12
     targetDirectMigrationNodePorts:
       targetDirectMigrationNodePortsKey: -30
+    targetDomainName: targetDomainNameValue
+    targetDomainNamespace: targetDomainNamespaceValue
     targetMigrationUid: targetMigrationUidValue
     targetNode: targetNodeValue
     targetNodeAddress: targetNodeAddressValue
@@ -695,6 +700,7 @@ status:
     targetPersistentStatePVCName: targetPersistentStatePVCNameValue
     targetPod: targetPodValue
     targetSyncAddress: targetSyncAddressValue
+    targetVirtualMachineInstanceUid: targetVirtualMachineInstanceUidValue
   migrationTransport: migrationTransportValue
   nodeName: nodeNameValue
   phase: phaseValue

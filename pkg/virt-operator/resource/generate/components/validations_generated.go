@@ -13714,11 +13714,18 @@ var CRDsValidation map[string]string = map[string]string{
             sourceNode:
               description: The source node that the VMI originated on
               type: string
+            sourceNodeSelectors:
+              additionalProperties:
+                type: string
+              type: object
             sourcePersistentStatePVCName:
               description: If the VMI being migrated uses persistent features (backend-storage),
                 its source PVC name is saved here
               type: string
             sourcePod:
+              type: string
+            sourceVirtualMachineInstanceUid:
+              description: The source VirtualMachineInstance UID
               type: string
             startTimestamp:
               description: The time the migration action began
@@ -13742,6 +13749,10 @@ var CRDsValidation map[string]string = map[string]string{
               description: The list of ports opened for live migration on the destination
                 node
               type: object
+            targetDomainName:
+              type: string
+            targetDomainNamespace:
+              type: string
             targetMigrationUid:
               description: The target VirtualMachineInstanceMigration object associated
                 with this migration
@@ -13774,6 +13785,9 @@ var CRDsValidation map[string]string = map[string]string{
               type: string
             targetSyncAddress:
               description: The url to use to synchronize the VMI with the target
+              type: string
+            targetVirtualMachineInstanceUid:
+              description: The target VirtualMachineInstance UID
               type: string
           type: object
         migrationTransport:
@@ -13998,6 +14012,10 @@ var CRDsValidation map[string]string = map[string]string{
           description: Required if operation is source, this is the url the virt-handler
             will connect to to perform the migration
           type: string
+        nodeAntiAffinity:
+          description: Optional if operation is target, this is when migrating inside
+            the same cluster but a different namespace.
+          type: string
         operation:
           description: |-
             The type of operation, either source or target. Target will create a new VMI (if not existing already)
@@ -14166,11 +14184,18 @@ var CRDsValidation map[string]string = map[string]string{
             sourceNode:
               description: The source node that the VMI originated on
               type: string
+            sourceNodeSelectors:
+              additionalProperties:
+                type: string
+              type: object
             sourcePersistentStatePVCName:
               description: If the VMI being migrated uses persistent features (backend-storage),
                 its source PVC name is saved here
               type: string
             sourcePod:
+              type: string
+            sourceVirtualMachineInstanceUid:
+              description: The source VirtualMachineInstance UID
               type: string
             startTimestamp:
               description: The time the migration action began
@@ -14194,6 +14219,10 @@ var CRDsValidation map[string]string = map[string]string{
               description: The list of ports opened for live migration on the destination
                 node
               type: object
+            targetDomainName:
+              type: string
+            targetDomainNamespace:
+              type: string
             targetMigrationUid:
               description: The target VirtualMachineInstanceMigration object associated
                 with this migration
@@ -14226,6 +14255,9 @@ var CRDsValidation map[string]string = map[string]string{
               type: string
             targetSyncAddress:
               description: The url to use to synchronize the VMI with the target
+              type: string
+            targetVirtualMachineInstanceUid:
+              description: The target VirtualMachineInstance UID
               type: string
           type: object
         phase:

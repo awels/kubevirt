@@ -931,8 +931,13 @@
       "targetNode": "targetNodeValue",
       "targetPod": "targetPodValue",
       "targetAttachmentPodUID": "targetAttachmentPodUIDValue",
+      "targetDomainName": "targetDomainNameValue",
+      "targetDomainNamespace": "targetDomainNamespaceValue",
       "sourceNode": "sourceNodeValue",
       "sourcePod": "sourcePodValue",
+      "sourceNodeSelectors": {
+        "sourceNodeSelectorsKey": "sourceNodeSelectorsValue"
+      },
       "completed": true,
       "failed": true,
       "abortRequested": true,
@@ -940,6 +945,8 @@
       "failureReason": "failureReasonValue",
       "sourceMigrationUid": "sourceMigrationUidValue",
       "targetMigrationUid": "targetMigrationUidValue",
+      "sourceVirtualMachineInstanceUid": "sourceVirtualMachineInstanceUidValue",
+      "targetVirtualMachineInstanceUid": "targetVirtualMachineInstanceUidValue",
       "mode": "modeValue",
       "migrationPolicyName": "migrationPolicyNameValue",
       "migrationConfiguration": {
