@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"kubevirt.io/client-go/log"
 
@@ -225,29 +226,47 @@ func (m *migrationProxy) handleConnection(fd io.ReadWriteCloser) {
 
 	var conn net.Conn
 	var err error
-	if m.targetProtocol == "tcp" && m.clientTLSConfig != nil {
-		m.logger.With("target", m.targetAddress).Info("dialing tcp outbound connection")
-		conn, err = tls.Dial(m.targetProtocol, m.targetAddress, m.clientTLSConfig)
-	} else {
-		m.logger.With("target", m.targetAddress).Info("dialing unix outbound connection")
-		conn, err = net.Dial(m.targetProtocol, m.targetAddress)
-	}
-	if err != nil {
-		m.logger.Reason(err).Error("unable to create outbound leg of proxy to host")
-		m.logger.Infof("unix socket path: %s", m.targetAddress)
-		dir := filepath.Dir(m.targetAddress)
-		m.logger.Infof("Reading directory %s", dir)
-		files, err := os.ReadDir(dir)
+	retries := 0
+	for retries < 30 {
+		if m.targetProtocol == "tcp" && m.clientTLSConfig != nil {
+			m.logger.With("target", m.targetAddress).Info("dialing tcp outbound connection")
+			conn, err = tls.Dial(m.targetProtocol, m.targetAddress, m.clientTLSConfig)
+		} else {
+			m.logger.With("target", m.targetAddress).Info("dialing unix outbound connection")
+			conn, err = net.Dial(m.targetProtocol, m.targetAddress)
+		}
 		if err != nil {
-			m.logger.Reason(err).Error("unable to list files in directory")
+			m.logger.Reason(err).Error("unable to create outbound leg of proxy to host")
+			m.logger.Infof("unix socket path: %s", m.targetAddress)
+			if m.targetProtocol == "unix" {
+				dir := filepath.Dir(m.targetAddress)
+				m.logger.Infof("Reading directory %s", dir)
+				files, err := os.ReadDir(dir)
+				if err != nil {
+					m.logger.Reason(err).Error("unable to list files in directory")
+				}
+				m.logger.Infof("Number of files in directory: %d", len(files))
+				for _, file := range files {
+					m.logger.Infof("file: %s", file.Name())
+				}
+				log.Log.Info("Unable to connecto to unix socket")
+				retries = 30
+			} else {
+				retries++
+				log.Log.Infof("retrying to connect to outbound connection, attempt %d", retries)
+				time.Sleep(time.Second)
+			}
+		} else {
+			log.Log.Info("Successfully connected to outbound connection")
+			// Done
+			retries = 30
 		}
-		m.logger.Infof("Number of files in directory: %d", len(files))
-		for _, file := range files {
-			m.logger.Infof("file: %s", file.Name())
-		}
+	}
+	if err != nil || conn == nil {
+		log.Log.Infof("Failed after 30 attempts to connect to outbound connection, conn: %v", conn)
 		return
 	}
-
+	log.Log.Infof("Successfully created outbound connection to %s", conn.RemoteAddr().String())
 	go func() {
 		//from outbound connection to proxy
 		n, err := io.Copy(fd, conn)

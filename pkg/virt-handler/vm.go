@@ -826,14 +826,15 @@ func (c *VirtualMachineController) migrationTargetUpdateVMIStatus(vmi *v1.Virtua
 			if vmi.Status.MigrationState.RemoteTargetNodeAddress != "" {
 				hostAddress = vmi.Status.MigrationState.RemoteTargetNodeAddress
 			} else {
+				log.Log.Infof("RemoteTargetNodeAddress not set, using %s", vmi.Status.MigrationState.TargetNodeAddress)
 				hostAddress = vmi.Status.MigrationState.TargetNodeAddress
 			}
 		}
 		if hostAddress != c.migrationIpAddress {
 			migrationAddress := hostAddress
-			if hostAddress == "" {
-				migrationAddress = c.migrationIpAddress
-			}
+			// if hostAddress == "" {
+			// 	migrationAddress = c.migrationIpAddress
+			// }
 			portsList := make([]string, 0, len(destSrcPortsMap))
 			for k := range destSrcPortsMap {
 				portsList = append(portsList, k)
@@ -2813,7 +2814,7 @@ func (c *VirtualMachineController) handleSourceMigrationProxy(vmi *v1.VirtualMac
 	if vmi.Status.MigrationState.TargetDirectMigrationNodePorts != nil {
 		log.Log.Infof("Should we start the source listener?, targetNodeAddress %s, sync proxy connected %t", vmi.Status.MigrationState.TargetNodeAddress, vmiConditions.HasConditionWithStatus(vmi, v1.VirtualMachineInstanceSyncProxyConnected, k8sv1.ConditionTrue))
 		if vmi.Status.MigrationState.TargetNodeAddress != "" {
-			log.Log.Info("Starting source listener")
+			log.Log.With("target", vmi.Status.MigrationState.TargetNodeAddress).Info("Starting source listener")
 			if err := c.migrationProxyManager.StartSourceListener(
 				string(vmi.UID),
 				vmi.Status.MigrationState.TargetNodeAddress,
@@ -3569,16 +3570,19 @@ func (c *VirtualMachineController) processVmUpdate(vmi *v1.VirtualMachineInstanc
 	c.handlePostMigrationProxyCleanup(vmi)
 	log.Log.Object(vmi).Infof("Is source migration: %t, is target %t, phase: %s", vmi.IsMigrationSource(), vmi.IsMigrationTarget(), vmi.Status.Phase)
 	if c.isPreMigrationTarget(vmi) || (vmi.IsMigrationTarget() && !vmi.IsMigrationSource() && vmi.Status.Phase != v1.Succeeded) {
-		log.DefaultLogger().Infof("preparing migration target for vmi %s/%s", vmi.Namespace, vmi.Name)
+		log.Log.Infof("preparing migration target for vmi %s/%s", vmi.Namespace, vmi.Name)
 		return c.vmUpdateHelperMigrationTarget(vmi)
 	} else if c.isPreMigrationSource(vmi) {
-		log.DefaultLogger().Infof("calling handle source migration proxy %s/%s", vmi.Namespace, vmi.Name)
+		log.Log.Infof("calling handle source migration proxy %s/%s", vmi.Namespace, vmi.Name)
 		return c.handleSourceMigrationProxy(vmi)
 	} else if c.isMigrationSource(vmi) {
-		log.DefaultLogger().Infof("update migration source vmi %s/%s", vmi.Namespace, vmi.Name)
+		log.Log.Infof("update migration source vmi %s/%s", vmi.Namespace, vmi.Name)
+		if vmi.Status.MigrationState != nil && vmi.Status.MigrationState.TargetNodeAddress != "" {
+			log.Log.Infof("Current TargetNodeAddress is %s", vmi.Status.MigrationState.TargetNodeAddress)
+		}
 		return c.vmUpdateHelperMigrationSource(vmi, domain)
 	} else {
-		log.DefaultLogger().Infof("helper default vmi %s", vmi.Name)
+		log.Log.Infof("helper default vmi %s", vmi.Name)
 		return c.vmUpdateHelperDefault(vmi, domain != nil)
 	}
 }

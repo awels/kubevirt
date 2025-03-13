@@ -125,7 +125,7 @@ func (admitter *MigrationCreateAdmitter) Admit(ctx context.Context, ar *admissio
 
 	// Reject migration jobs for non-migratable VMIs
 	err = isMigratable(vmi)
-	if err != nil {
+	if err != nil && !(migration.IsSource() || migration.IsTarget()) {
 		return webhookutils.ToAdmissionResponseError(err)
 	}
 

@@ -275,6 +275,7 @@ func (m *migrationProxyManager) createSourceSocketProxies(vmiUID, targetAddress 
 
 		os.RemoveAll(filePath)
 
+		log.Log.With("full address", targetFullAddr).Infof("Creating proxy for file: %s, uid %s", filePath, vmiUID)
 		proxy := NewSourceSocketProxy(filePath, targetFullAddr, serverTLSConfig, clientTLSConfig, vmiUID)
 
 		err := proxy.Start()

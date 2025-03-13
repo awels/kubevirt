@@ -429,7 +429,7 @@ func (c *Controller) execute(key string) error {
 }
 
 func (c *Controller) deleteSourceVMI(migration *virtv1.VirtualMachineInstanceMigration, vmi *virtv1.VirtualMachineInstance) error {
-	if migration.IsSource() && !migration.IsTarget() && vmi.Status.MigrationState != nil {
+	if migration.IsSource() && !migration.IsTarget() && vmi.Status.MigrationState != nil && !vmi.Status.MigrationState.Failed && vmi.Status.MigrationState.Completed {
 		vmiKey := controller.NamespacedKey(migration.Namespace, migration.Spec.VMIName)
 		log.Log.Infof("Shutting down VMI, Getting VM for key %s", vmiKey)
 		obj, exists, err := c.vmIndexer.GetByKey(vmiKey)
@@ -998,6 +998,7 @@ func (c *Controller) createTargetPod(migration *virtv1.VirtualMachineInstanceMig
 		}
 		if templatePod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms == nil {
 			templatePod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms = []k8sv1.NodeSelectorTerm{}
+			templatePod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms = append(templatePod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms, k8sv1.NodeSelectorTerm{})
 		}
 		templatePod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions = append(templatePod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions,
 			k8sv1.NodeSelectorRequirement{
@@ -1042,7 +1043,7 @@ func (c *Controller) createTargetPod(migration *virtv1.VirtualMachineInstanceMig
 			if err != nil {
 				return err
 			}
-			nodeSelectors, err = prepareNodeSelectorForHostCpuModel(node, templatePod, sourcePod)
+			nodeSelectors, err = prepareNodeSelectorForHostCpuModel(node, templatePod, sourcePod.Spec.NodeSelector)
 		} else {
 			nodeSelectors, err = getNodeSelectorsFromVMIMigrationState(vmi.Status.MigrationState)
 		}
@@ -1285,6 +1286,12 @@ func (c *Controller) updateVMITargetRemoteNodeAddress(migration *virtv1.VirtualM
 		return err
 	}
 	vmiCopy.Status.MigrationState.RemoteTargetNodeAddress = clusterIP
+	// Replace the address with the address of sync service
+	if vmi.Status.MigrationState != nil && vmi.Status.MigrationState.TargetSyncAddress != "" && strings.Contains(vmi.Status.MigrationState.TargetSyncAddress, "svc") {
+		vmiCopy.Status.MigrationState.RemoteTargetNodeAddress = strings.Replace(vmi.Status.MigrationState.TargetSyncAddress, "sync", "migration", 1)
+		vmiCopy.Status.MigrationState.RemoteTargetNodeAddress = strings.Split(vmiCopy.Status.MigrationState.RemoteTargetNodeAddress, ":")[0]
+	}
+	log.Log.Object(migration).Infof("Setting remote target node address to %s", vmiCopy.Status.MigrationState.RemoteTargetNodeAddress)
 	if err := c.patchVMI(vmi, vmiCopy); err != nil {
 		c.recorder.Eventf(migration, k8sv1.EventTypeWarning, controller.FailedHandOverPodReason, fmt.Sprintf("Failed to set MigrationState in VMI status. :%v", err))
 		return err
@@ -2927,11 +2934,11 @@ func getNodeSelectorsFromVMIMigrationState(migrationState *virtv1.VirtualMachine
 	return result, nil
 }
 
-func prepareNodeSelectorForHostCpuModel(node *k8sv1.Node, pod *k8sv1.Pod, sourcePod *k8sv1.Pod) (map[string]string, error) {
+func prepareNodeSelectorForHostCpuModel(node *k8sv1.Node, pod *k8sv1.Pod, sourcePodNodeSelector map[string]string) (map[string]string, error) {
 	result := make(map[string]string)
 
 	// if the vmi already migrated before it should include node selector that consider CPUModelLabel
-	for key, value := range sourcePod.Spec.NodeSelector {
+	for key, value := range sourcePodNodeSelector {
 		if strings.Contains(key, virtv1.CPUFeatureLabel) || strings.Contains(key, virtv1.SupportedHostModelMigrationCPU) {
 			pod.Spec.NodeSelector[key] = value
 			return pod.Spec.NodeSelector, nil

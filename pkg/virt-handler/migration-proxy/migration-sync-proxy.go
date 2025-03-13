@@ -214,18 +214,31 @@ func (m *migrationSyncProxy) StartSourceSync(url string) error {
 	m.logger.Info("dialing sync tcp outbound connection")
 	var conn net.Conn
 	var err error
-	if m.clientTLSConfig != nil {
-		conn, err = tls.Dial("tcp", url, m.clientTLSConfig)
-	} else {
-		conn, err = net.Dial("tcp", url)
+	retries := 0
+	for retries < 30 {
+		if m.clientTLSConfig != nil {
+			conn, err = tls.Dial("tcp", url, m.clientTLSConfig)
+		} else {
+			conn, err = net.Dial("tcp", url)
+		}
+		if err != nil {
+			m.logger.Reason(err).Error("failed to dial sync proxy")
+			retries++
+			log.Log.Infof("retrying to connect to outbound sync connection, attempt %d", retries)
+			time.Sleep(time.Second)
+		} else {
+			log.Log.Info("Successfully connected to sync outbound connection")
+			// Done
+			retries = 30
+		}
 	}
-	if err != nil {
-		m.logger.Reason(err).Error("failed to dial sync proxy")
+	if err != nil || conn == nil {
+		log.Log.Infof("Failed after 30 attempts to connect to outbound sync connection, conn: %v", conn)
 		return err
 	}
+
 	m.logger.Infof("Setting sync connection in sync proxy: %s", conn.RemoteAddr().String())
 	m.conn = conn
-
 	go func() {
 		m.handleIncomingVMI(conn)
 	}()
@@ -457,6 +470,7 @@ func (m *migrationSyncProxy) mergeLocalCopyMigrationStatusWithRemote(localVMISta
 			// bindPort = 0 means we are the source proxy
 			// So when we receive a VMI from the target, we are only interested in propagating
 			// the changes to the target fields in the migration state
+			log.Log.Infof("Setting source VMI target node address to %s", remoteVMIStatus.MigrationState.TargetNodeAddress)
 			local.MigrationState.TargetNodeAddress = remoteVMIStatus.MigrationState.TargetNodeAddress
 			local.MigrationState.TargetDirectMigrationNodePorts = remoteVMIStatus.MigrationState.TargetDirectMigrationNodePorts
 			local.MigrationState.TargetNodeDomainDetected = remoteVMIStatus.MigrationState.TargetNodeDomainDetected
